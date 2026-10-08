@@ -1,3 +1,6 @@
+import { HomePage } from './pages/HomePage';
+import { LoginPage } from './pages/LoginPage';
+import { usePathView } from './pathView';
 import { FloatingCrate } from './components/FloatingCrate';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ShipmentDetail } from '../server/pipeline';
@@ -65,6 +68,7 @@ function confirmationsFor(result: Pick<ScenarioResult, 'event' | 'shipment'>): s
 }
 
 export function App() {
+  const view = usePathView();
   const [state, setState] = useState<ShipmentDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -258,6 +262,10 @@ export function App() {
       setBusy(null);
     }
   }
+
+  // Public pages sit outside the dashboard shell. Hooks above are all called first, so the order is stable.
+  if (view === 'home') return <HomePage />;
+  if (view === 'login') return <LoginPage />;
 
   return (
     <Shell

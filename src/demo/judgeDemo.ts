@@ -144,7 +144,7 @@ export async function runJudgeDemo(shipmentId: string, deps: DemoDeps, emit: (u:
     id: 'alert',
     status: 'done',
     headline: `Deal live · ${rupees(listing.currentPricePerKg)}/kg`,
-    facts: [`${alert.severity} alert sent to ${alert.recipient}`, 'SMS / WhatsApp — simulated'],
+    facts: [`${alert.severity} alert recorded for ${alert.recipient}`, 'SMS / WhatsApp — simulated'],
   });
   await deps.wait(PAUSE_MS);
 

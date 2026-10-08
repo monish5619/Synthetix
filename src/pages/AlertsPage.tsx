@@ -75,7 +75,7 @@ function AlertCard({ alert: a, busy, onAcknowledge }: { alert: AlertItem; busy: 
         )}
       </p>
       <p className="alert-delivery">
-        Sent to {a.recipient} · SMS / WhatsApp — simulated
+        For {a.recipient} · delivery simulated (SMS / WhatsApp)
         <InfoTip about="delivery" text="No real message is sent. A production build would hand this alert to an SMS or WhatsApp provider." />
       </p>
       <div className="alert-ack">

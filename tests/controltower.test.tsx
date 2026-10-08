@@ -111,7 +111,7 @@ describe('the seven-step chain', () => {
     expect(by.ageing).toBe(`${hours(spiked.current.cumulativeEquivalentAge)} h`);
     expect(by.risk).toBe('CRITICAL');
     expect(by.price).toBe('Repriced');
-    expect(by.alert).toBe(`${spiked.alerts.length} sent`);
+    expect(by.alert).toBe(`${spiked.alerts.length} raised`);
     expect(by.rescue).toBe(`${spiked.recommendations[0]!.sellByHours} h`);
   });
 

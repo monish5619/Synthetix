@@ -77,7 +77,7 @@ export function storyStages(state: ShipmentDetail): Stage[] {
       key: 'alert',
       step: 'Alert',
       icon: 'bell',
-      value: alerts.length > 0 ? `${alerts.length} sent` : 'None',
+      value: alerts.length > 0 ? `${alerts.length} raised` : 'None',
       label: 'Retailer alert',
       lit: alerts.length > 0,
       link: 'alerts',
