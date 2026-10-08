@@ -1,23 +1,36 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { ApiError } from './errors.js';
+import { ApiError, EngineError } from './errors.js';
 import { DEMO_SHIPMENT } from './demo.js';
 import type { Db } from './db.js';
+import { inTransaction } from './db.js';
+import { checkDegradationEngine, checkLiquidationEngine, type HealthReport } from './health.js';
+import { hashRequest, isDatabaseUnavailable, isValidIdempotencyKey } from './guards.js';
 import { getShipmentDetail, getShipmentRow, ingestTelemetry, listShipments, listTelemetry } from './pipeline.js';
 import { resetDemoShipment } from './seed.js';
 import { SCENARIOS, type ScenarioName } from './simulator.js';
-import { checkDegradationEngine, checkLiquidationEngine, type HealthReport } from './health.js';
 import { validateTelemetry } from './validation.js';
 import { listAlerts, listMarketplace, telemetryHistory } from './views.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export interface AppOptions {
+  /** Exact origins allowed to call the API cross-origin. Empty means same-origin only. */
+  allowedOrigins: readonly string[];
+  /** Enables the scripted demo endpoints (simulate, reset). */
+  demoMode: boolean;
+}
+
 /**
  * API contract. Every error response has the shape:
  *   { "error": { "code": string, "message": string, "details"?: string[] } }
  */
-export function createApp(db: Db) {
+export function createApp(db: Db, options: AppOptions) {
   const app = express();
   app.disable('x-powered-by');
+  app.set('etag', false);
+
+  app.use('/api', securityHeaders);
+  app.use('/api', corsFor(options.allowedOrigins));
   app.use(express.json({ limit: '10kb' }));
 
   /** Reaching this handler means the telemetry API is up. The database and engines are checked live. */
@@ -25,7 +38,7 @@ export function createApp(db: Db) {
     try {
       db.prepare('SELECT 1').get();
     } catch {
-      throw new ApiError(503, 'DATABASE_UNAVAILABLE', 'Database is not reachable.');
+      throw new ApiError(503, 'DATABASE_UNAVAILABLE', 'The database is unavailable. Try again shortly.');
     }
     const report: HealthReport = {
       telemetryApi: 'ONLINE',
@@ -52,8 +65,7 @@ export function createApp(db: Db) {
   });
 
   app.get('/api/shipments/:id', (req, res) => {
-    const id = parseId(req.params.id);
-    res.json(getShipmentDetail(db, id));
+    res.json(getShipmentDetail(db, parseId(req.params.id)));
   });
 
   /** Telemetry events joined to the snapshot each one produced. */
@@ -70,31 +82,40 @@ export function createApp(db: Db) {
     res.json({ shipmentId: id, count: events.length, events });
   });
 
-  /** External telemetry ingest: validate, persist, recalculate, liquidate, alert, audit. */
+  /**
+   * External telemetry ingest: validate, persist, recalculate, liquidate, alert, audit.
+   * Optional Idempotency-Key header: a retry with the same key and body returns the
+   * original result, and writes nothing new.
+   */
   app.post('/api/telemetry', (req, res) => {
     const validation = validateTelemetry(req.body);
     if (!validation.ok) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'Telemetry request is invalid.', validation.errors);
     }
-    const event = ingestTelemetry(db, validation.value);
-    res.status(201).json({ event, shipment: getShipmentDetail(db, validation.value.shipmentId) });
+    const { value } = validation;
+    idempotent(req, res, db, 'POST /api/telemetry', { shipmentId: value.shipmentId, ...reqBody(req) }, () => {
+      const event = ingestTelemetry(db, value);
+      return { event, shipment: getShipmentDetail(db, value.shipmentId) };
+    });
   });
 
   /**
-   * Primary demo action. The server generates the reading, so the browser sends no values.
-   * The reading goes through the same validation and pipeline as external telemetry, and
-   * the complete updated state is returned.
+   * Demo primary action. The server generates the reading, so the browser sends no values.
+   * The reading goes through the same validation and pipeline as external telemetry.
    */
   app.post('/api/shipments/:id/simulate-spike', (req, res) => {
-    runScenario(req.params.id, 'ambient-spike', res);
+    requireDemo(options);
+    runScenario(req, res, db, 'ambient-spike');
   });
 
   app.post('/api/shipments/:id/simulate-normal', (req, res) => {
-    runScenario(req.params.id, 'normal-reading', res);
+    requireDemo(options);
+    runScenario(req, res, db, 'normal-reading');
   });
 
-  /** Demo-only: restores the demo shipment to its initial state under the same id. */
+  /** Demo only: restores the demo shipment to its initial state under the same id. */
   app.post('/api/shipments/:id/reset', (req, res) => {
+    requireDemo(options);
     const id = parseId(req.params.id);
     if (getShipmentRow(db, id).code !== DEMO_SHIPMENT.code) {
       throw new ApiError(403, 'RESET_NOT_ALLOWED', 'Only the demo shipment can be reset.');
@@ -108,34 +129,128 @@ export function createApp(db: Db) {
   });
 
   app.use(errorHandler);
-
-  function runScenario(rawId: string, scenario: ScenarioName, res: Response) {
-    const id = parseId(rawId);
-    getShipmentRow(db, id); // 404 before anything is generated
-
-    const reading = SCENARIOS[scenario];
-    const validation = validateTelemetry({ shipmentId: id, ...reading });
-    if (!validation.ok) {
-      // Scenario values are fixed in code, so this fires only if a scenario definition is wrong.
-      throw new Error(`Scenario ${scenario} failed validation`);
-    }
-
-    const event = ingestTelemetry(db, validation.value);
-    res.status(201).json({
-      scenario,
-      readings: reading,
-      event,
-      shipment: getShipmentDetail(db, id),
-    });
-  }
-
   return app;
 }
+
+/* ---------- request helpers ---------- */
 
 function parseId(raw: string): string {
   if (!UUID.test(raw)) throw new ApiError(400, 'INVALID_ID', 'Shipment id is not valid.');
   return raw;
 }
+
+function reqBody(req: Request): Record<string, unknown> {
+  return typeof req.body === 'object' && req.body !== null && !Array.isArray(req.body)
+    ? (req.body as Record<string, unknown>)
+    : {};
+}
+
+function requireDemo(options: AppOptions) {
+  if (!options.demoMode) throw new ApiError(403, 'DEMO_DISABLED', 'Demo controls are disabled on this deployment.');
+}
+
+function runScenario(req: Request, res: Response, db: Db, scenario: ScenarioName) {
+  const id = parseId(req.params.id as string);
+  getShipmentRow(db, id); // 404 before anything is generated
+  idempotent(req, res, db, `POST ${scenario}`, { shipmentId: id, scenario }, () => {
+    const reading = SCENARIOS[scenario];
+    const validation = validateTelemetry({ shipmentId: id, ...reading });
+    if (!validation.ok) {
+      // Scenario values are fixed in code, so this fires only if a scenario definition is wrong.
+      throw new EngineError('scenario definition failed validation');
+    }
+    const event = ingestTelemetry(db, validation.value);
+    return { scenario, readings: reading, event, shipment: getShipmentDetail(db, id) };
+  });
+}
+
+/**
+ * Runs a write at most once per Idempotency-Key. The key check, the write, and the
+ * stored response share one transaction, so a crash cannot record a key without its work.
+ * Without the header, the write simply runs.
+ */
+function idempotent(
+  req: Request,
+  res: Response,
+  db: Db,
+  scope: string,
+  body: unknown,
+  work: () => unknown,
+) {
+  const raw = req.headers['idempotency-key'];
+  if (raw === undefined) {
+    res.status(201).json(work());
+    return;
+  }
+  // A repeated header arrives as an array. Treat that as malformed rather than guessing.
+  const header = Array.isArray(raw) ? '' : raw;
+  if (!isValidIdempotencyKey(header)) {
+    throw new ApiError(400, 'VALIDATION_ERROR', 'Idempotency-Key must be 8 to 128 letters, digits, hyphens, or underscores.');
+  }
+
+  const requestHash = hashRequest(scope, body);
+  const outcome = inTransaction(db, () => {
+    const stored = db
+      .prepare('SELECT request_hash, response_json FROM idempotency_keys WHERE key = ? AND scope = ?')
+      .get(header, scope) as { request_hash: string; response_json: string } | undefined;
+    if (stored) {
+      if (stored.request_hash !== requestHash) {
+        throw new ApiError(409, 'IDEMPOTENCY_CONFLICT', 'This Idempotency-Key was already used for a different request.');
+      }
+      return { replayed: true, payload: JSON.parse(stored.response_json) as unknown };
+    }
+    const payload = work();
+    db.prepare('INSERT INTO idempotency_keys (key, scope, request_hash, response_json, created_at) VALUES (?, ?, ?, ?, ?)').run(
+      header,
+      scope,
+      requestHash,
+      JSON.stringify(payload),
+      new Date().toISOString(),
+    );
+    return { replayed: false, payload };
+  });
+
+  res.setHeader('Idempotent-Replayed', outcome.replayed ? 'true' : 'false');
+  res.status(201).json(outcome.payload);
+}
+
+/* ---------- middleware ---------- */
+
+function securityHeaders(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  // Live operational data must never be served from a cache.
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+}
+
+/**
+ * CORS allows only the exact origins listed in configuration. There is no wildcard and
+ * no credentials. A request from any other origin receives no CORS headers, so the
+ * browser blocks it. Preflight requests from unlisted origins get a bare 204.
+ */
+function corsFor(allowed: readonly string[]) {
+  const allowedSet = new Set(allowed);
+  return (req: Request, res: Response, next: NextFunction) => {
+    res.vary('Origin');
+    const origin = req.get('Origin');
+    if (origin && allowedSet.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Idempotency-Key');
+      res.setHeader('Access-Control-Max-Age', '600');
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  };
+}
+
+/* ---------- errors ---------- */
 
 function errorHandler(error: unknown, _req: Request, res: Response, _next: NextFunction) {
   if (error instanceof ApiError) {
@@ -154,9 +269,20 @@ function errorHandler(error: unknown, _req: Request, res: Response, _next: NextF
     res.status(413).json({ error: { code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large.' } });
     return;
   }
+  if (isDatabaseUnavailable(error)) {
+    console.error('[agrosense] database unavailable');
+    res.status(503).json({ error: { code: 'DATABASE_UNAVAILABLE', message: 'The database is unavailable. Try again shortly.' } });
+    return;
+  }
+  if (error instanceof EngineError) {
+    // Nothing was written: the pipeline runs inside a transaction that rolled back.
+    console.error(`[agrosense] engine failure: ${error.name}`);
+    res.status(500).json({ error: { code: 'MODEL_FAILURE', message: 'The reading could not be processed. Nothing was saved.' } });
+    return;
+  }
 
   // Log the error class only. Messages, stacks, and SQL never reach the client or the log.
   const name = error instanceof Error ? error.name : 'UnknownError';
   console.error(`[agrosense] unhandled error: ${name}`);
-  res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. The change was not saved.' } });
+  res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } });
 }

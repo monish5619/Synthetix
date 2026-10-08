@@ -14,4 +14,12 @@ export class ApiError extends Error {
   }
 }
 
+/** Raised when the degradation model or liquidation engine cannot finish a run. The run is rolled back. */
+export class EngineError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EngineError';
+  }
+}
+
 export const notFound = (message: string) => new ApiError(404, 'NOT_FOUND', message);

@@ -15,7 +15,7 @@ const MISSING_ID = '00000000-0000-4000-8000-000000000000';
 beforeAll(async () => {
   db = openDatabase(':memory:');
   shipmentId = seedDemoShipment(db);
-  server = createApp(db).listen(0);
+  server = createApp(db, { allowedOrigins: [], demoMode: true }).listen(0);
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });

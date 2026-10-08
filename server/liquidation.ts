@@ -8,6 +8,7 @@ import {
   type RiskLevel,
   type Urgency,
 } from './config.js';
+import { assertMarkdownPct, assertPricePerKg } from './guards.js';
 import type { ModelOutput } from './model.js';
 
 export interface LiquidationDecision {
@@ -36,7 +37,9 @@ export function decideLiquidation(input: {
   originalPricePerKg: number;
   previousMarkdownPct: number;
 }): LiquidationDecision {
-  const { output, originalPricePerKg, previousMarkdownPct } = input;
+  const { output, previousMarkdownPct } = input;
+  const originalPricePerKg = assertPricePerKg(input.originalPricePerKg, 'original price');
+  assertMarkdownPct(previousMarkdownPct, 'previous markdown percentage');
   const rule = LIQUIDATION_POLICY[output.riskLevel];
 
   // Discounts only deepen, so a later milder reading never raises the price back.
@@ -74,6 +77,8 @@ export function reasonFor(output: ModelOutput): string {
 }
 
 export function discountedPrice(basePricePerKg: number, markdownPct: number): number {
+  assertPricePerKg(basePricePerKg, 'base price');
+  assertMarkdownPct(markdownPct);
   return round2(basePricePerKg * (1 - markdownPct / 100));
 }
 

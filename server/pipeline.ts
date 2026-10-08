@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { inTransaction, type Db } from './db.js';
-import { notFound } from './errors.js';
+import { EngineError, notFound } from './errors.js';
 import {
   LIQUIDATION_POLICY,
   MODEL_CONFIG,
@@ -308,15 +308,17 @@ export function ingestTelemetry(db: Db, request: TelemetryRequest): TelemetryEve
     const previous = latestSnapshot(db, row.id);
     const previousRisk: RiskLevel = previous?.risk_level ?? 'NORMAL';
 
-    const output = evaluateExposure({
-      baselineShelfLifeHours: row.baseline_shelf_life_hours,
-      cumulativeBefore: row.cumulative_equivalent_age_hours,
-      exposure: {
-        temperatureC: request.temperature,
-        humidityPct: request.humidity,
-        exposureHours: request.transitDuration,
-      },
-    });
+    const output = engineStep('degradation model', () =>
+      evaluateExposure({
+        baselineShelfLifeHours: row.baseline_shelf_life_hours,
+        cumulativeBefore: row.cumulative_equivalent_age_hours,
+        exposure: {
+          temperatureC: request.temperature,
+          humidityPct: request.humidity,
+          exposureHours: request.transitDuration,
+        },
+      }),
+    );
     const transitRemaining = Math.max(0, row.transit_remaining_hours - request.transitDuration);
 
     const telemetryId = randomUUID();
@@ -351,11 +353,13 @@ export function ingestTelemetry(db: Db, request: TelemetryRequest): TelemetryEve
     const listing = db
       .prepare('SELECT discount_pct FROM marketplace_listings WHERE shipment_id = ?')
       .get(row.id) as { discount_pct: number };
-    const decision = decideLiquidation({
-      output,
-      originalPricePerKg: row.original_price_per_kg,
-      previousMarkdownPct: listing.discount_pct,
-    });
+    const decision = engineStep('liquidation engine', () =>
+      decideLiquidation({
+        output,
+        originalPricePerKg: row.original_price_per_kg,
+        previousMarkdownPct: listing.discount_pct,
+      }),
+    );
 
     if (decision.deepened) {
       db.prepare(
@@ -496,4 +500,13 @@ export interface SnapshotView {
   equivalentAgeIncrement: number;
   riskLevel: RiskLevel;
   createdAt: string;
+}
+
+/** Runs one engine step. Any failure becomes an EngineError, so the API can report it without internals. */
+function engineStep<T>(name: string, step: () => T): T {
+  try {
+    return step();
+  } catch {
+    throw new EngineError(`${name} failed`);
+  }
 }

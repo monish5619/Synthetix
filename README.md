@@ -96,11 +96,57 @@ Stack traces, SQL, database paths, and secrets never appear in responses. Only t
 
 Hash routes, one page each: `#/` Control Tower, `#/marketplace` listings, `#/telemetry` history and the operational event timeline, `#/alerts` spoilage alerts. Secondary screens poll every 4 seconds, so a spike on the Control Tower reaches them without a reload.
 
-## Security notes
+## Configuration and security
 
-- Secrets and database paths are read from environment variables on the server only. No server code is imported by the client bundle, and only `import type` references cross the boundary.
-- Internal errors return a generic 500 message. Only the error name is logged.
-- All inputs are validated before any write.
+Configuration comes from environment variables, read once at startup by `server/env.ts`. A bad value stops the server with a message naming the variable, but never its value. Copy [.env.example](.env.example) to `.env` for local settings. `.env` is git-ignored, so real values never reach the repository.
+
+| Variable | Scope | Purpose |
+| -------- | ----- | ------- |
+| `NODE_ENV` | server | `development`, `production`, or `test` |
+| `PORT` | server | Listen port, 1 to 65535 |
+| `DATABASE_PATH` | server | SQLite file. The path is never sent to the browser |
+| `ALLOWED_ORIGINS` | server | Exact origins allowed to call the API cross-origin. Empty means same-origin. No wildcards. HTTPS only in production |
+| `DEMO_MODE` | server | Enables the scripted demo endpoints. Defaults to off in production |
+| `VITE_API_BASE_URL` | build, **public** | Optional separate API origin for the UI. Embedded in the bundle, so it must never hold a secret |
+
+Secrets and database credentials belong only in server-side variables. Anything prefixed `VITE_` is public, because Vite embeds it in the browser bundle. The production bundle was checked for server-only identifiers (`DATABASE_PATH`, `ALLOWED_ORIGINS`, `DEMO_MODE`, `node:sqlite`, `process.env`) and for localhost references. None were found.
+
+**Browser security**
+
+- The API is same-origin by default. CORS allows only exact origins listed in `ALLOWED_ORIGINS`, with no credentials. Requests from any other origin receive no CORS headers, so the browser blocks them.
+- Production pages send a Content-Security-Policy that limits scripts to the same origin and forbids framing.
+- Every API response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and `Cache-Control: no-store`. Live operational data is never cached.
+
+**Input validation**
+
+- Shipment ids must be well-formed UUIDs. Unknown fields are rejected.
+- Temperature must be a finite number from −40 to 60 °C. Humidity must be a finite number from 0 to 100 %. Transit duration must be a finite number from 0 to 24 h. NaN, Infinity, and negative values are refused.
+- Prices must be finite, above 0, and at most 100 000 ₹/kg. Markdowns must be whole numbers from 0 to 60 %. The liquidation engine checks these itself, so bad values cannot reach the marketplace.
+- Idempotency keys must be 8 to 128 safe characters. A request body is limited to 10 KB.
+
+**Errors**
+
+Every error returns `{ "error": { "code", "message", "details?" } }`. Stack traces, SQL, file paths, and internal messages are never sent to the browser or the log. The log records only the error class.
+
+| Situation | Status | Code |
+| --- | --- | --- |
+| Invalid request | 400 | `VALIDATION_ERROR`, `MALFORMED_JSON`, `INVALID_ID` |
+| Unknown shipment | 404 | `NOT_FOUND` |
+| Demo control in production | 403 | `DEMO_DISABLED` |
+| Key reused for a different request | 409 | `IDEMPOTENCY_CONFLICT` |
+| Database unavailable | 503 | `DATABASE_UNAVAILABLE` |
+| Model or engine failure | 500 | `MODEL_FAILURE`, with nothing saved |
+| Anything unexpected | 500 | `INTERNAL_ERROR` |
+
+**Data integrity**
+
+- Each telemetry write runs in one transaction. A failure at any step rolls back every row. A failed model run leaves no partial state.
+- A request with an `Idempotency-Key` header is recorded at most once. A retry with the same key and body returns the original result and writes nothing new. A reused key with a different body is refused.
+- The audit trail records every step: `TELEMETRY_RECEIVED`, `SHELF_LIFE_RECALCULATED`, `RISK_ESCALATED`, `LIQUIDATION_RECOMMENDED`, `MARKETPLACE_UPDATED`, `RETAILER_ALERT_GENERATED`.
+
+**Database connection**
+
+The browser never connects to the database. Only the server opens it, using a path from its own environment. The database is opened with foreign keys enforced, and it is closed cleanly on shutdown.
 
 ## Layout
 

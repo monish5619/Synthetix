@@ -1,3 +1,26 @@
+/**
+ * Base URL for the API. Empty means same-origin, which is the default and the safe choice.
+ * A build may point the UI at a separate API origin by setting VITE_API_BASE_URL. That
+ * value is public: it ends up in the browser bundle, so it must never contain a secret.
+ */
+const RAW_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+const API_BASE = validateBase(RAW_BASE);
+
+function validateBase(base: string): string {
+  if (base === '') return '';
+  // HTTPS everywhere. Plain HTTP to localhost is accepted only in development builds,
+  // and the production bundle drops that branch entirely.
+  const ok =
+    /^https:\/\/[^\s/]+$/.test(base) || (import.meta.env.DEV && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base));
+  if (!ok) throw new Error('VITE_API_BASE_URL must be an https origin, or empty for same-origin.');
+  return base;
+}
+
+/** Every API request goes through here, so the base URL and the request policy live in one place. */
+function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(API_BASE + path, { ...init, credentials: 'omit', cache: 'no-store' });
+}
+
 import type { ShipmentDetail, TelemetryEventView } from '../server/pipeline';
 import type { ScenarioName, SimulatedReading } from '../server/simulator';
 
@@ -36,25 +59,25 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function fetchShipments(): Promise<ShipmentSummary[]> {
-  const body = await readJson<{ shipments: ShipmentSummary[] }>(await fetch('/api/shipments'));
+  const body = await readJson<{ shipments: ShipmentSummary[] }>(await apiFetch('/api/shipments'));
   return body.shipments;
 }
 
 export async function fetchShipment(id: string): Promise<ShipmentDetail> {
-  return readJson<ShipmentDetail>(await fetch(`/api/shipments/${id}`));
+  return readJson<ShipmentDetail>(await apiFetch(`/api/shipments/${id}`));
 }
 
 /** Primary action. The server generates the thermal reading. The browser sends no values. */
 export async function simulateSpike(shipmentId: string): Promise<ScenarioResult> {
-  return readJson<ScenarioResult>(await fetch(`/api/shipments/${shipmentId}/simulate-spike`, { method: 'POST' }));
+  return readJson<ScenarioResult>(await apiFetch(`/api/shipments/${shipmentId}/simulate-spike`, { method: 'POST' }));
 }
 
 export async function simulateNormal(shipmentId: string): Promise<ScenarioResult> {
-  return readJson<ScenarioResult>(await fetch(`/api/shipments/${shipmentId}/simulate-normal`, { method: 'POST' }));
+  return readJson<ScenarioResult>(await apiFetch(`/api/shipments/${shipmentId}/simulate-normal`, { method: 'POST' }));
 }
 
 export async function resetShipment(shipmentId: string): Promise<ShipmentDetail> {
-  return readJson<ShipmentDetail>(await fetch(`/api/shipments/${shipmentId}/reset`, { method: 'POST' }));
+  return readJson<ShipmentDetail>(await apiFetch(`/api/shipments/${shipmentId}/reset`, { method: 'POST' }));
 }
 
 export interface HealthReport {
@@ -66,7 +89,7 @@ export interface HealthReport {
 }
 
 export async function fetchHealth(): Promise<HealthReport> {
-  return readJson<HealthReport>(await fetch('/api/health'));
+  return readJson<HealthReport>(await apiFetch('/api/health'));
 }
 
 /* ---------- secondary read models ---------- */
@@ -119,13 +142,13 @@ export interface HistoryEntry {
 }
 
 export async function fetchMarketplace(): Promise<MarketplaceListing[]> {
-  return (await readJson<{ listings: MarketplaceListing[] }>(await fetch('/api/marketplace'))).listings;
+  return (await readJson<{ listings: MarketplaceListing[] }>(await apiFetch('/api/marketplace'))).listings;
 }
 
 export async function fetchAlerts(): Promise<AlertItem[]> {
-  return (await readJson<{ alerts: AlertItem[] }>(await fetch('/api/alerts'))).alerts;
+  return (await readJson<{ alerts: AlertItem[] }>(await apiFetch('/api/alerts'))).alerts;
 }
 
 export async function fetchTelemetryHistory(shipmentId: string): Promise<HistoryEntry[]> {
-  return (await readJson<{ entries: HistoryEntry[] }>(await fetch(`/api/shipments/${shipmentId}/telemetry-history`))).entries;
+  return (await readJson<{ entries: HistoryEntry[] }>(await apiFetch(`/api/shipments/${shipmentId}/telemetry-history`))).entries;
 }

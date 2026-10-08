@@ -7,9 +7,10 @@ import { DatabaseSync } from 'node:sqlite';
  * version is rebuilt from scratch: this is pre-release demo data, so there is
  * no migration path to preserve.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 const TABLES = [
+  'idempotency_keys',
   'audit_logs',
   'spoilage_alerts',
   'liquidation_recommendations',
@@ -114,6 +115,16 @@ CREATE TABLE audit_logs (
   created_at TEXT NOT NULL
 );
 
+-- Idempotency: a repeated request with the same key returns the stored response.
+CREATE TABLE idempotency_keys (
+  key TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (key, scope)
+);
+
 CREATE INDEX idx_telemetry_shipment ON telemetry_events(shipment_id, recorded_at);
 CREATE INDEX idx_snapshots_shipment ON shelf_life_snapshots(shipment_id, created_at);
 CREATE INDEX idx_recommendations_shipment ON liquidation_recommendations(shipment_id, created_at);
@@ -147,15 +158,29 @@ function migrate(db: Db) {
   }
 }
 
-/** Runs fn inside a transaction; rolls back on any thrown error. */
+/** Nesting depth per connection. Inner calls use savepoints, so a failure rolls back only its own work. */
+const depth = new WeakMap<Db, number>();
+
+/**
+ * Runs fn in a transaction. If one is already open on this connection, fn runs in a
+ * savepoint instead. Any thrown error rolls back everything fn wrote.
+ */
 export function inTransaction<T>(db: Db, fn: () => T): T {
-  db.exec('BEGIN IMMEDIATE');
+  const level = depth.get(db) ?? 0;
+  const savepoint = `sp_${level}`;
+  if (level === 0) db.exec('BEGIN IMMEDIATE');
+  else db.exec(`SAVEPOINT ${savepoint}`);
+  depth.set(db, level + 1);
   try {
     const result = fn();
-    db.exec('COMMIT');
+    depth.set(db, level);
+    if (level === 0) db.exec('COMMIT');
+    else db.exec(`RELEASE ${savepoint}`);
     return result;
   } catch (error) {
-    db.exec('ROLLBACK');
+    depth.set(db, level);
+    if (level === 0) db.exec('ROLLBACK');
+    else db.exec(`ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
     throw error;
   }
 }
