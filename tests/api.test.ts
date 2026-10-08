@@ -61,12 +61,12 @@ describe('server and database', () => {
     expect(detail.shipment.produce).toBe('Premium Tomatoes');
     expect(detail.shipment.status).toBe('IN_TRANSIT');
     expect(detail.shipment.originalPricePerKg).toBe(100);
-    expect(detail.shipment.profile.referenceShelfLifeHours).toBe(120);
-    expect(detail.shipment.profile.referenceTempC).toBe(4);
+    expect(detail.shipment.baselineShelfLifeHours).toBe(120);
+    expect(detail.shipment.idealTemperatureC).toBe(4);
     expect(detail.current.temperature).toBe(4);
     expect(detail.current.humidity).toBe(60);
-    expect(detail.current.riskLevel).toBe('LOW');
-    expect(detail.current.remainingShelfLifeHours).toBeCloseTo(120, 6);
+    expect(detail.current.riskLevel).toBe('NORMAL');
+    expect(detail.current.remainingHours).toBeCloseTo(120, 6);
     expect(detail.listing.currentPricePerKg).toBe(100);
     expect(detail.listing.status).toBe('NORMAL');
     expect(detail.alerts).toHaveLength(0);
@@ -89,7 +89,7 @@ describe('shipment reads', () => {
       status: 'IN_TRANSIT',
       currentTemperature: 4,
       currentHumidity: 60,
-      riskLevel: 'LOW',
+      riskLevel: 'NORMAL',
       currentPricePerKg: 100,
     });
   });
@@ -114,14 +114,14 @@ describe('telemetry ingest', () => {
       shipmentId,
       temperature: 22,
       humidity: 80,
-      transitDuration: 1.5,
+      transitDuration: 14,
     });
     expect(typeof body.event.id).toBe('string');
     expect(body.shipment.current.riskLevel).toBe('CRITICAL');
-    expect(body.shipment.current.remainingShelfLifeHours).toBeGreaterThan(17);
-    expect(body.shipment.current.remainingShelfLifeHours).toBeLessThan(18.5);
-    expect(body.shipment.listing.discountPct).toBe(34);
-    expect(body.shipment.listing.currentPricePerKg).toBe(66);
+    expect(body.shipment.current.remainingHours).toBeGreaterThan(17);
+    expect(body.shipment.current.remainingHours).toBeLessThan(18.5);
+    expect(body.shipment.listing.discountPct).toBe(35);
+    expect(body.shipment.listing.currentPricePerKg).toBe(65);
     expect(body.shipment.alerts).toHaveLength(1);
     expect(body.shipment.recommendations).toHaveLength(1);
     expect(body.shipment.audit.map((a: { eventType: string }) => a.eventType)).toEqual(
@@ -129,8 +129,8 @@ describe('telemetry ingest', () => {
         'TELEMETRY_RECEIVED',
         'SHELF_LIFE_RECALCULATED',
         'LIQUIDATION_RECOMMENDED',
-        'MARKETPLACE_LISTING_UPDATED',
-        'SPOILAGE_ALERT_RAISED',
+        'MARKETPLACE_UPDATED',
+        'RETAILER_ALERT_GENERATED',
       ]),
     );
 
@@ -141,15 +141,15 @@ describe('telemetry ingest', () => {
     const body = await (await send('GET', `/api/shipments/${shipmentId}/telemetry`)).json();
     expect(body.shipmentId).toBe(shipmentId);
     const spike = body.events.find((e: { temperature: number }) => e.temperature === 22);
-    expect(spike).toMatchObject({ humidity: 80, transitDuration: 1.5 });
+    expect(spike).toMatchObject({ humidity: 80, transitDuration: 14 });
     expect(typeof spike.recordedAt).toBe('string');
   });
 
   it('keeps the discount after a normal reading and does not duplicate the alert', async () => {
     const res = await telemetry({ shipmentId, ...NORMAL_READING });
     const body = await res.json();
-    expect(body.shipment.listing.discountPct).toBe(34);
-    expect(body.shipment.listing.currentPricePerKg).toBe(66);
+    expect(body.shipment.listing.discountPct).toBe(35);
+    expect(body.shipment.listing.currentPricePerKg).toBe(65);
     expect(body.shipment.alerts).toHaveLength(1);
   });
 
@@ -217,9 +217,9 @@ describe('error handling', () => {
   it('refuses to reset a shipment that is not the demo shipment', async () => {
     db.prepare(
       `INSERT INTO shipments (id, code, produce, origin, destination, retailer, status, quantity_kg, original_price_per_kg,
-         reference_temp_c, reference_humidity_pct, reference_shelf_life_hours, q10, transit_total_hours,
-         transit_remaining_hours, equivalent_age_hours, current_temperature_c, current_humidity_pct, created_at, updated_at)
-       VALUES ('11111111-1111-4111-8111-111111111111', 'OTHER-1', 'x', 'x', 'x', 'x', 'IN_TRANSIT', 1, 1, 4, 60, 120, 2.5, 1, 1, 0, 4, 60, 'now', 'now')`,
+         baseline_shelf_life_hours, transit_total_hours, transit_remaining_hours, cumulative_equivalent_age_hours,
+         current_temperature_c, current_humidity_pct, created_at, updated_at)
+       VALUES ('11111111-1111-4111-8111-111111111111', 'OTHER-1', 'x', 'x', 'x', 'x', 'IN_TRANSIT', 1, 1, 120, 1, 1, 0, 4, 60, 'now', 'now')`,
     ).run();
     await expectError(
       await send('POST', '/api/shipments/11111111-1111-4111-8111-111111111111/reset'),
@@ -234,7 +234,7 @@ describe('error handling', () => {
     expect(res.status).toBe(200);
     const detail = await res.json();
     expect(detail.shipment.id).toBe(shipmentId);
-    expect(detail.current.riskLevel).toBe('LOW');
+    expect(detail.current.riskLevel).toBe('NORMAL');
     expect(detail.listing.currentPricePerKg).toBe(100);
     expect(detail.alerts).toHaveLength(0);
     expect(detail.telemetry).toHaveLength(0);

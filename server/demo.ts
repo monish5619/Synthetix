@@ -1,8 +1,9 @@
-import type { ProductProfile } from './model.js';
+import { DEMO_BASELINE } from './config.js';
 
 /**
  * Demo shipment, seeded into the database on first start. Illustrative data only.
- * Reference profile: 120 h of shelf life at 4 °C / 60 % RH, Q10 = 2.5.
+ * Model parameters (Q10, ideal temperature, humidity threshold, calibration) live
+ * in config.ts. This file holds only shipment-specific facts.
  */
 export const DEMO_SHIPMENT = {
   code: 'AS-1042',
@@ -15,11 +16,5 @@ export const DEMO_SHIPMENT = {
   transitHours: 36,
   initialTemperatureC: 4,
   initialHumidityPct: 60,
-  profile: {
-    produce: 'Premium Tomatoes',
-    referenceTempC: 4,
-    referenceHumidityPct: 60,
-    referenceShelfLifeHours: 120,
-    q10: 2.5,
-  } satisfies ProductProfile,
+  baselineShelfLifeHours: DEMO_BASELINE.shelfLifeHours,
 };

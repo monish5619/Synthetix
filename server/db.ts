@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
  * version is rebuilt from scratch: this is pre-release demo data, so there is
  * no migration path to preserve.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const TABLES = [
   'audit_logs',
@@ -30,14 +30,11 @@ CREATE TABLE shipments (
   status TEXT NOT NULL CHECK (status IN ('IN_TRANSIT', 'ARRIVED')),
   quantity_kg REAL NOT NULL CHECK (quantity_kg > 0),
   original_price_per_kg REAL NOT NULL CHECK (original_price_per_kg > 0),
-  reference_temp_c REAL NOT NULL,
-  reference_humidity_pct REAL NOT NULL,
-  reference_shelf_life_hours REAL NOT NULL CHECK (reference_shelf_life_hours > 0),
-  q10 REAL NOT NULL CHECK (q10 > 1),
+  baseline_shelf_life_hours REAL NOT NULL CHECK (baseline_shelf_life_hours > 0),
   transit_total_hours REAL NOT NULL CHECK (transit_total_hours >= 0),
-  -- Current state: the only place these values live. Everything else derives from them.
+  -- Current state. Remaining shelf life is derived from cumulative_equivalent_age_hours.
   transit_remaining_hours REAL NOT NULL CHECK (transit_remaining_hours >= 0),
-  equivalent_age_hours REAL NOT NULL CHECK (equivalent_age_hours >= 0),
+  cumulative_equivalent_age_hours REAL NOT NULL CHECK (cumulative_equivalent_age_hours >= 0),
   current_temperature_c REAL NOT NULL,
   current_humidity_pct REAL NOT NULL CHECK (current_humidity_pct BETWEEN 0 AND 100),
   created_at TEXT NOT NULL,
@@ -49,7 +46,7 @@ CREATE TABLE telemetry_events (
   shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
   temperature_c REAL NOT NULL,
   humidity_pct REAL NOT NULL CHECK (humidity_pct BETWEEN 0 AND 100),
-  transit_duration_hours REAL NOT NULL CHECK (transit_duration_hours >= 0),
+  exposure_hours REAL NOT NULL CHECK (exposure_hours >= 0),
   recorded_at TEXT NOT NULL
 );
 
@@ -58,15 +55,18 @@ CREATE TABLE shelf_life_snapshots (
   shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
   -- NULL for the baseline snapshot created at shipment initialisation.
   telemetry_event_id TEXT UNIQUE REFERENCES telemetry_events(id) ON DELETE CASCADE,
-  thermal_multiplier REAL NOT NULL,
-  humidity_multiplier REAL NOT NULL,
-  age_rate REAL NOT NULL,
-  equivalent_age_hours REAL NOT NULL,
-  remaining_equivalent_hours REAL NOT NULL,
-  remaining_shelf_life_hours REAL NOT NULL,
+  model_version TEXT NOT NULL,
+  temperature_c REAL NOT NULL,
+  humidity_pct REAL NOT NULL,
+  exposure_hours REAL NOT NULL,
+  temperature_stress REAL NOT NULL,
+  humidity_factor REAL NOT NULL,
+  equivalent_age_increment REAL NOT NULL,
+  cumulative_equivalent_age REAL NOT NULL,
+  remaining_hours REAL NOT NULL,
   transit_remaining_hours REAL NOT NULL,
-  margin REAL NOT NULL,
-  risk_level TEXT NOT NULL CHECK (risk_level IN ('LOW', 'MODERATE', 'HIGH', 'CRITICAL')),
+  risk_level TEXT NOT NULL CHECK (risk_level IN ('NORMAL', 'WATCH', 'HIGH', 'CRITICAL')),
+  explanation TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 
@@ -83,11 +83,14 @@ CREATE TABLE liquidation_recommendations (
   id TEXT PRIMARY KEY,
   shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
   snapshot_id TEXT NOT NULL UNIQUE REFERENCES shelf_life_snapshots(id) ON DELETE CASCADE,
+  risk_level TEXT NOT NULL CHECK (risk_level IN ('NORMAL', 'WATCH', 'HIGH', 'CRITICAL')),
   markdown_pct INTEGER NOT NULL CHECK (markdown_pct BETWEEN 1 AND 60),
   original_price_per_kg REAL NOT NULL,
-  liquidation_price_per_kg REAL NOT NULL,
-  sell_by_hours REAL NOT NULL CHECK (sell_by_hours >= 0),
-  rationale TEXT NOT NULL,
+  recommended_price_per_kg REAL NOT NULL,
+  sell_by_hours INTEGER NOT NULL CHECK (sell_by_hours >= 0),
+  urgency TEXT NOT NULL CHECK (urgency IN ('MONITOR', 'PRIORITY', 'IMMEDIATE')),
+  reason TEXT NOT NULL,
+  retailer_action TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('APPLIED')),
   created_at TEXT NOT NULL
 );

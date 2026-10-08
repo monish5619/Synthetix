@@ -1,10 +1,10 @@
-import type { RiskLevel } from '../server/model';
+import type { RiskLevel } from '../server/config';
 
 export const RISK_COPY: Record<RiskLevel, { label: string; note: string }> = {
-  LOW: { label: 'Low risk', note: 'Shelf life comfortably outlasts transit.' },
-  MODERATE: { label: 'Moderate', note: 'Margin is narrowing. Watch the next reading.' },
-  HIGH: { label: 'High risk', note: 'Shelf life is short of arrival. Liquidation threshold crossed.' },
-  CRITICAL: { label: 'Critical', note: 'Produce will spoil before it reaches the destination.' },
+  NORMAL: { label: 'Normal', note: 'Shelf life comfortably outlasts the planned storage window.' },
+  WATCH: { label: 'Watch', note: 'Shelf life is narrowing. Keep the next readings under review.' },
+  HIGH: { label: 'High risk', note: 'Shelf life is close to running out. Prioritise sale.' },
+  CRITICAL: { label: 'Critical', note: 'Produce will spoil before it can be sold at full price.' },
 };
 
 /** "5 days · 0.0 h" style, from a decimal hour count. */

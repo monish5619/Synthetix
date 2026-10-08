@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { inTransaction, type Db } from './db.js';
 import { DEMO_SHIPMENT } from './demo.js';
-import { assess, discountedPrice } from './model.js';
+import { MODEL_CONFIG } from './config.js';
+import { discountedPrice } from './liquidation.js';
+import { evaluateExposure } from './model.js';
 import { audit, insertSnapshot } from './pipeline.js';
 
 const now = () => new Date().toISOString();
@@ -16,8 +18,8 @@ export function seedDemoShipment(db: Db): string {
 
 /**
  * Rebuilds the demo shipment at its initial state. Keeps the same id when it
- * already exists, and deletes its prior telemetry, snapshots, listing and audit
- * trail (ON DELETE CASCADE), so the workflow can be replayed.
+ * already exists. Prior telemetry, snapshots, listing, and audit are removed by
+ * ON DELETE CASCADE, so the workflow can be replayed.
  */
 export function resetDemoShipment(db: Db): string {
   return inTransaction(db, () => {
@@ -28,17 +30,20 @@ export function resetDemoShipment(db: Db): string {
     if (existing) db.prepare('DELETE FROM shipments WHERE id = ?').run(id);
 
     const ts = now();
-    const { profile } = DEMO_SHIPMENT;
     const initial = { temperatureC: DEMO_SHIPMENT.initialTemperatureC, humidityPct: DEMO_SHIPMENT.initialHumidityPct };
-    const baseline = { equivalentAgeHours: 0, transitRemainingHours: DEMO_SHIPMENT.transitHours };
-    const a = assess(profile, baseline, initial);
+
+    // The baseline is the model evaluated with zero exposure, so it is recorded like any other run.
+    const baseline = evaluateExposure({
+      baselineShelfLifeHours: DEMO_SHIPMENT.baselineShelfLifeHours,
+      cumulativeBefore: 0,
+      exposure: { ...initial, exposureHours: 0 },
+    });
 
     db.prepare(
       `INSERT INTO shipments (id, code, produce, origin, destination, retailer, status, quantity_kg, original_price_per_kg,
-        reference_temp_c, reference_humidity_pct, reference_shelf_life_hours, q10,
-        transit_total_hours, transit_remaining_hours, equivalent_age_hours,
+        baseline_shelf_life_hours, transit_total_hours, transit_remaining_hours, cumulative_equivalent_age_hours,
         current_temperature_c, current_humidity_pct, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'IN_TRANSIT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'IN_TRANSIT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       DEMO_SHIPMENT.code,
@@ -48,13 +53,10 @@ export function resetDemoShipment(db: Db): string {
       DEMO_SHIPMENT.retailer,
       DEMO_SHIPMENT.quantityKg,
       DEMO_SHIPMENT.originalPricePerKg,
-      profile.referenceTempC,
-      profile.referenceHumidityPct,
-      profile.referenceShelfLifeHours,
-      profile.q10,
+      DEMO_SHIPMENT.baselineShelfLifeHours,
       DEMO_SHIPMENT.transitHours,
-      baseline.transitRemainingHours,
-      baseline.equivalentAgeHours,
+      DEMO_SHIPMENT.transitHours,
+      baseline.cumulativeEquivalentAge,
       initial.temperatureC,
       initial.humidityPct,
       ts,
@@ -66,14 +68,13 @@ export function resetDemoShipment(db: Db): string {
        VALUES (?, ?, ?, 0, 'NORMAL', ?)`,
     ).run(randomUUID(), id, discountedPrice(DEMO_SHIPMENT.originalPricePerKg, 0), ts);
 
-    insertSnapshot(db, id, null, a, ts);
-
+    insertSnapshot(db, id, null, baseline, DEMO_SHIPMENT.transitHours, ts);
     audit(
       db,
       id,
       'SHIPMENT_INITIALIZED',
-      `Shipment ${DEMO_SHIPMENT.code} initialised at ${initial.temperatureC} °C / ${initial.humidityPct} % RH`,
-      { riskLevel: a.riskLevel, remainingShelfLifeHours: a.remainingShelfLifeHours },
+      `Shipment ${DEMO_SHIPMENT.code} initialised at ${initial.temperatureC} °C / ${initial.humidityPct} % RH (Q10 ${MODEL_CONFIG.q10})`,
+      { riskLevel: baseline.riskLevel, remainingHours: baseline.remainingHours, modelVersion: baseline.modelVersion },
       ts,
     );
     return id;

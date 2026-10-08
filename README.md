@@ -6,37 +6,39 @@ AgroSense monitors a refrigerated shipment, recalculates the remaining shelf lif
 
 ## The workflow
 
-1. The shipment starts at **120 h** of shelf life, **LOW** risk, and the marketplace price is **₹100/kg**.
-2. **Simulate ambient temperature spike** sends a real `POST` from the browser to `/api/shipments/:id/telemetry`.
+1. The shipment starts at **120 h** of shelf life, **NORMAL** risk, and the marketplace price is **₹100/kg**.
+2. **Simulate ambient temperature spike** sends a real `POST` from the browser to `/api/telemetry`.
 3. The server validates the event, stores it, and recalculates degradation.
-4. Shelf life drops to about **18 h**, risk becomes **CRITICAL**, and a liquidation recommendation is created.
-5. The listing reprices to about **₹66/kg** (34% off). A retailer alert and audit entries are written.
+4. Shelf life drops to **17.5 h**, risk becomes **CRITICAL**, and a liquidation recommendation is created.
+5. The listing reprices to **₹65/kg** (35% off). A retailer alert and audit entries are written.
 6. Everything is persisted to SQLite, so a browser refresh shows the same state.
 
 ## The model
 
-It is deterministic and does not use an LLM or ML. It is a Q10-style equivalent-ageing model:
+The decision engine is deterministic and explainable. There is no ML and no LLM. Every tunable number lives in [server/config.ts](server/config.ts).
 
 ```
-thermal multiplier   = Q10 ^ ((T − Tref) / 10)              Q10 = 2.5, Tref = 4 °C
-humidity multiplier  = 1 + 0.01 × max(0, RH − 60)
-ageing rate          = thermal × humidity
-damage              += interval_hours × ageing rate          (reference hours spent)
-remaining shelf life = (120 − damage) ÷ current ageing rate  (hours at current conditions)
-cover (margin)       = remaining shelf life ÷ remaining transit hours
-risk                 = critical < 1.00 · high < 1.25 · moderate < 2.00 · low ≥ 2.00
+temperatureStress      = Q10 ^ ((T − idealTemperature) / 10)          Q10 = 2.5, ideal = 4 °C
+humidityFactor         = 1 + humidityPenaltyPerPct × max(0, RH − 60)   0.02 per point
+equivalentAgeIncrement = exposureHours × temperatureStress × humidityFactor × calibration
+cumulativeEquivalentAge += equivalentAgeIncrement                      calibration = 1.005
+remainingHours         = max(0, baselineShelfLife − cumulativeEquivalentAge)   baseline = 120 h
 ```
 
-Liquidation triggers at HIGH or CRITICAL risk. The markdown is `10 + 50 × (1 − cover)`, capped at 60%. Discounts only deepen, so a later normal reading does not raise the price back.
+Risk bands on remaining hours: **NORMAL** above 72 h, **WATCH** 36–72 h, **HIGH** 18–36 h, **CRITICAL** below 18 h.
 
-The UI's "Degradation chain" panel shows each step with its live inputs.
+Liquidation policy: NORMAL 0%, WATCH 10%, HIGH 25%, CRITICAL 35%. Discounts only deepen. Each recommendation carries the risk level, markdown, original and recommended prices, urgency, a reason built from the model's drivers, and a retailer action.
+
+**Official scenario:** 120 h at 4 °C. A 14 h excursion at 22 °C and 80 % RH adds 102.50 h of equivalent ageing, leaving **17.5 h**: CRITICAL, 35% off, ₹100 → ₹65/kg. The model computes this. The calibration coefficient is the one fitted value. Without it the same event gives 18.04 h, and the 1.005 factor moves the result into the CRITICAL band. Recalibrate it against observed spoilage data.
+
+Every run is stored as a snapshot with its full decomposition, and each step writes an audit event.
 
 ## Stack
 
 - **Server:** Node.js with Express 5, TypeScript run by `tsx`
 - **Database:** SQLite through Node's built-in `node:sqlite`. There are no native build steps.
 - **Frontend:** React 19 with Vite
-- **Tests:** Vitest. The model math and the full API workflow are covered.
+- **Tests:** Vitest, 53 tests. Model scenarios, the liquidation and alert engine, the official 120 h → 17.5 h scenario, and the full API workflow.
 
 ## Run it
 

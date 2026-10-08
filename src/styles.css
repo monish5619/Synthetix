@@ -805,13 +805,13 @@ button {
 
 /* risk themes */
 
-.risk-LOW { --risk: var(--low); }
-.risk-MODERATE { --risk: var(--moderate); }
+.risk-NORMAL { --risk: var(--low); }
+.risk-WATCH { --risk: var(--moderate); }
 .risk-HIGH { --risk: var(--high); }
 .risk-CRITICAL { --risk: var(--critical); }
 
-.severity-low { --risk: var(--low); }
-.severity-moderate { --risk: var(--moderate); }
+.severity-normal { --risk: var(--low); }
+.severity-watch { --risk: var(--moderate); }
 .severity-high { --risk: var(--high); }
 .severity-critical { --risk: var(--critical); }
 
@@ -878,4 +878,26 @@ button {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---------- decision engine additions ---------- */
+
+.explanation {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-left: 2px solid var(--cold);
+  background: rgba(125, 203, 194, 0.06);
+  font-size: 13px;
+  color: var(--ink-soft);
+  border-radius: 0 4px 4px 0;
+}
+
+.rec-action {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.facts dd.is-bad {
+  color: var(--critical);
 }

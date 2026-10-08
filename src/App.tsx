@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ShipmentDetail as ShipmentState } from '../server/pipeline';
-import type { RiskLevel } from '../server/model';
+import type { RiskLevel } from '../server/config';
 import { AMBIENT_SPIKE, NORMAL_READING } from '../shared/scenarios';
 import { fetchShipment, fetchShipments, resetShipment, sendTelemetry } from './api';
 import { RISK_COPY, clock, daysAndHours, hours, multiplier, rupees } from './format';
@@ -59,7 +59,7 @@ export function App() {
 
   const reset = () => state && run('reset', () => resetShipment(state.shipment.id));
 
-  const level: RiskLevel = state?.current.riskLevel ?? 'LOW';
+  const level: RiskLevel = state?.current.riskLevel ?? 'NORMAL';
 
   return (
     <div className="app">
@@ -98,7 +98,7 @@ export function App() {
             <div className="control-copy">
               <p className="eyebrow">Simulated telemetry · software only</p>
               <p>
-                Readings go through the ingest API, are validated and stored, and recalculate the shelf-life model.
+                Readings go through the ingest API, are validated and stored, and feed the shelf-life model.
                 No hardware involved.
               </p>
             </div>
@@ -170,19 +170,19 @@ function useTween(target: number, duration = 1100) {
 
 function Hero({ state, level }: { state: ShipmentState; level: RiskLevel }) {
   const { current, shipment } = state;
-  const shelf = useTween(current.remainingShelfLifeHours);
+  const remaining = useTween(current.remainingHours);
   const transit = useTween(current.transitRemainingHours);
-  const margin = current.margin >= 99 ? '99+' : current.margin.toFixed(2);
+  const surplus = remaining - transit;
 
   return (
     <section className={`hero risk-${level}`} aria-label="Shelf life and risk">
       <div className="hero-main">
         <p className="eyebrow">Remaining shelf life</p>
         <div className="hero-number" aria-live="polite">
-          <span>{shelf.toFixed(1)}</span>
+          <span>{remaining.toFixed(1)}</span>
           <small>h</small>
         </div>
-        <p className="hero-sub">{daysAndHours(shelf)} at current conditions</p>
+        <p className="hero-sub">{daysAndHours(remaining)} from the model</p>
       </div>
 
       <div className="hero-side">
@@ -191,8 +191,11 @@ function Hero({ state, level }: { state: ShipmentState; level: RiskLevel }) {
         <p className="hero-note">{RISK_COPY[level].note}</p>
         <dl className="facts">
           <div>
-            <dt>Cover</dt>
-            <dd>{margin}×</dd>
+            <dt>Arrival margin</dt>
+            <dd className={surplus < 0 ? 'is-bad' : ''}>
+              {surplus >= 0 ? '+' : '−'}
+              {Math.abs(surplus).toFixed(1)} h
+            </dd>
           </div>
           <div>
             <dt>Transit left</dt>
@@ -205,19 +208,19 @@ function Hero({ state, level }: { state: ShipmentState; level: RiskLevel }) {
         </dl>
       </div>
 
-      <LifeTrack shelf={shelf} transit={transit} reference={shipment.profile.referenceShelfLifeHours} />
+      <LifeTrack remaining={remaining} transit={transit} reference={shipment.baselineShelfLifeHours} />
     </section>
   );
 }
 
-function LifeTrack({ shelf, transit, reference }: { shelf: number; transit: number; reference: number }) {
-  const shelfPct = clamp((shelf / reference) * 100);
+function LifeTrack({ remaining, transit, reference }: { remaining: number; transit: number; reference: number }) {
+  const shelfPct = clamp((remaining / reference) * 100);
   const transitPct = clamp((transit / reference) * 100);
-  const beforeArrival = shelf < transit;
+  const beforeArrival = remaining < transit;
   return (
     <div className="life-track" aria-label="Shelf life against remaining transit">
       <div className="track-labels">
-        <span>Shelf life {hours(shelf)} h</span>
+        <span>Shelf life {hours(remaining)} h</span>
         <span>Arrival in {hours(transit)} h</span>
       </div>
       <div className="track">
@@ -236,53 +239,59 @@ function LifeTrack({ shelf, transit, reference }: { shelf: number; transit: numb
 /* ---------- Degradation chain: every step of the model, live ---------- */
 
 function Chain({ state }: { state: ShipmentState }) {
-  const { current, shipment } = state;
-  const p = shipment.profile;
+  const { current, shipment, model, latestModelRun } = state;
   const temp = current.temperature;
   const rh = current.humidity;
-  const shelf = useTween(current.remainingShelfLifeHours);
-  const equivalent = useTween(current.equivalentAgeHours);
+  const remaining = useTween(current.remainingHours);
+  const cumulative = useTween(current.cumulativeEquivalentAge);
+
+  // The latest run explains the most recent interval. Before any telemetry it is the baseline.
+  const stress = latestModelRun?.temperatureStress ?? 1;
+  const humidity = latestModelRun?.humidityFactor ?? 1;
+  const increment = latestModelRun?.equivalentAgeIncrement ?? 0;
+  const exposure = latestModelRun?.exposureHours ?? 0;
+  const reference = shipment.baselineShelfLifeHours;
 
   const steps = [
     {
       label: 'Ambient temperature',
       value: `${temp.toFixed(1)} °C`,
-      detail: `reference ${p.referenceTempC} °C`,
+      detail: `ideal storage ${model.idealTemperatureC} °C`,
     },
     {
       label: 'Thermal stress',
-      value: multiplier(current.thermalMultiplier),
-      detail: `Q10 ${p.q10} ^ ((${temp.toFixed(1)} − ${p.referenceTempC}) ÷ 10)`,
+      value: multiplier(stress),
+      detail: `Q10 ${model.q10} ^ ((${temp.toFixed(1)} − ${model.idealTemperatureC}) ÷ 10)`,
     },
     {
-      label: 'Humidity effect',
-      value: multiplier(current.humidityMultiplier),
-      detail: `1 + 0.01 × max(0, ${rh.toFixed(0)} − ${p.referenceHumidityPct})`,
+      label: 'Humidity factor',
+      value: multiplier(humidity),
+      detail: `1 + ${model.humidityPenaltyPerPct} × max(0, ${rh.toFixed(0)} − ${model.humidityThresholdPct})`,
     },
     {
-      label: 'Equivalent ageing',
-      value: multiplier(current.ageRate),
-      detail: 'thermal × humidity: reference hours spent per real hour',
+      label: 'Exposure interval',
+      value: `${exposure.toFixed(1)} h`,
+      detail: 'hours since the previous reading',
     },
     {
-      label: 'Cumulative damage',
-      value: `${equivalent.toFixed(1)} h`,
-      detail: `of ${p.referenceShelfLifeHours} reference hours (${((equivalent / p.referenceShelfLifeHours) * 100).toFixed(1)}% spent)`,
+      label: 'Equivalent ageing added',
+      value: `${increment.toFixed(2)} h`,
+      detail: `${exposure.toFixed(1)} × ${stress.toFixed(2)} × ${humidity.toFixed(2)} × calibration ${model.calibrationCoefficient}`,
+    },
+    {
+      label: 'Cumulative ageing',
+      value: `${cumulative.toFixed(1)} h`,
+      detail: `of ${reference} reference hours (${((cumulative / reference) * 100).toFixed(1)}% spent)`,
     },
     {
       label: 'Remaining shelf life',
-      value: `${shelf.toFixed(1)} h`,
-      detail: `(${p.referenceShelfLifeHours} − ${equivalent.toFixed(1)}) ÷ ${current.ageRate.toFixed(2)}`,
-    },
-    {
-      label: 'Cover vs transit',
-      value: `${current.margin >= 99 ? '99+' : current.margin.toFixed(2)}×`,
-      detail: `${shelf.toFixed(1)} h shelf ÷ ${hours(current.transitRemainingHours)} h transit left`,
+      value: `${remaining.toFixed(1)} h`,
+      detail: `max(0, ${reference} − ${cumulative.toFixed(1)})`,
     },
     {
       label: 'Risk level',
       value: RISK_COPY[current.riskLevel].label,
-      detail: 'critical < 1.00 · high < 1.25 · moderate < 2.00 · low ≥ 2.00',
+      detail: `critical < ${model.riskBands.criticalBelowHours} h · high < ${model.riskBands.watchAboveHours} h · watch < ${model.riskBands.normalAboveHours} h`,
     },
   ];
 
@@ -290,7 +299,7 @@ function Chain({ state }: { state: ShipmentState }) {
     <section className="panel chain" aria-labelledby="chain-title">
       <header className="panel-head">
         <h2 id="chain-title">Degradation chain</h2>
-        <span className="panel-note">Q10 model · deterministic</span>
+        <span className="panel-note">{current.modelVersion || model.modelVersion}</span>
       </header>
       <ThermalBar temp={temp} />
       <ol className="steps">
@@ -307,6 +316,7 @@ function Chain({ state }: { state: ShipmentState }) {
           </li>
         ))}
       </ol>
+      {current.explanation && <p className="explanation">{current.explanation}</p>}
     </section>
   );
 }
@@ -330,6 +340,12 @@ function ThermalBar({ temp }: { temp: number }) {
 
 /* ---------- Marketplace: listing, recommendation, retailer alerts ---------- */
 
+const URGENCY_LABEL: Record<string, string> = {
+  MONITOR: 'Monitor',
+  PRIORITY: 'Priority',
+  IMMEDIATE: 'Immediate',
+};
+
 function Market({ state }: { state: ShipmentState }) {
   const { listing, recommendations, alerts, shipment } = state;
   const discounted = listing.discountPct > 0;
@@ -346,7 +362,9 @@ function Market({ state }: { state: ShipmentState }) {
 
       <div className="listing">
         <div>
-          <p className="eyebrow">{shipment.produce} · {shipment.quantityKg.toLocaleString()} kg</p>
+          <p className="eyebrow">
+            {shipment.produce} · {shipment.quantityKg.toLocaleString()} kg
+          </p>
           <div className="price">
             {discounted && <s>{rupees(listing.basePricePerKg)}</s>}
             <span className="price-now">{rupees(listing.currentPricePerKg)}</span>
@@ -358,14 +376,17 @@ function Market({ state }: { state: ShipmentState }) {
 
       {latest ? (
         <div className="recommendation">
-          <p className="eyebrow">Liquidation recommendation</p>
-          <p className="rec-line">
-            Sell by <strong>~{latest.sellByHours} h</strong> at {rupees(latest.liquidationPricePerKg)}/kg
+          <p className="eyebrow">
+            Liquidation recommendation · {URGENCY_LABEL[latest.urgency] ?? latest.urgency}
           </p>
-          <p className="rec-rationale">{latest.rationale}</p>
+          <p className="rec-line">
+            Sell by <strong>~{latest.sellByHours} h</strong> at {rupees(latest.recommendedPricePerKg)}/kg
+          </p>
+          <p className="rec-rationale">{latest.reason}</p>
+          <p className="rec-action">{latest.retailerAction}</p>
         </div>
       ) : (
-        <p className="quiet">No liquidation needed. Recommendations appear when risk reaches HIGH.</p>
+        <p className="quiet">No liquidation needed. Recommendations appear when risk moves above NORMAL.</p>
       )}
 
       <div className="alerts">
@@ -390,13 +411,15 @@ function Market({ state }: { state: ShipmentState }) {
 
 function Trace({ state }: { state: ShipmentState }) {
   const points = state.telemetry;
-  const reference = state.shipment.profile.referenceTempC;
+  const reference = state.shipment.idealTemperatureC;
   const width = 600;
   const height = 180;
   const pad = 24;
   const y = (t: number) => height - pad - (clamp(t, 0, 30) / 30) * (height - pad * 2);
   const x = (i: number) => (points.length <= 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - pad * 2));
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.temperature).toFixed(1)}`).join(' ');
+  const path = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.temperature).toFixed(1)}`)
+    .join(' ');
 
   return (
     <section className="panel trace" aria-labelledby="trace-title">
@@ -405,20 +428,19 @@ function Trace({ state }: { state: ShipmentState }) {
         <span className="panel-note">{points.length} readings stored</span>
       </header>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Temperature readings over time">
-        <line
-          x1={pad}
-          x2={width - pad}
-          y1={y(reference)}
-          y2={y(reference)}
-          className="ref-line"
-        />
+        <line x1={pad} x2={width - pad} y1={y(reference)} y2={y(reference)} className="ref-line" />
         <text x={pad} y={y(reference) - 6} className="ref-label">
-          reference {reference} °C
+          ideal {reference} °C
         </text>
         {points.length > 0 && <path d={path} className="trace-line" />}
         {points.map((p, i) => (
           <g key={p.id}>
-            <circle cx={x(i)} cy={y(p.temperature)} r={4.5} className={p.temperature > reference + 4 ? 'dot hot' : 'dot'} />
+            <circle
+              cx={x(i)}
+              cy={y(p.temperature)}
+              r={4.5}
+              className={p.temperature > reference + 4 ? 'dot hot' : 'dot'}
+            />
             <text x={x(i)} y={y(p.temperature) - 10} className="dot-label">
               {p.temperature.toFixed(0)}°
             </text>

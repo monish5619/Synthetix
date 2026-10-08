@@ -1,4 +1,9 @@
-/** Validated telemetry request, using the field names from the public API. */
+import { VALID_RANGES } from './config.js';
+
+/**
+ * Validated telemetry request. transitDuration is the exposure interval in hours
+ * since the previous reading, and the reading applies to that interval.
+ */
 export interface TelemetryRequest {
   shipmentId: string;
   temperature: number;
@@ -9,10 +14,6 @@ export interface TelemetryRequest {
 export type ValidationResult =
   | { ok: true; value: TelemetryRequest }
   | { ok: false; errors: string[] };
-
-export const TEMPERATURE_RANGE = { min: -40, max: 60 } as const;
-export const HUMIDITY_RANGE = { min: 0, max: 100 } as const;
-export const TRANSIT_DURATION_RANGE = { min: 0, max: 24 } as const;
 
 const FIELDS = ['shipmentId', 'temperature', 'humidity', 'transitDuration'] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,9 +42,9 @@ export function validateTelemetry(body: unknown): ValidationResult {
     errors.push('shipmentId must be a valid shipment id.');
   }
 
-  const temperature = readNumber(input, 'temperature', TEMPERATURE_RANGE, errors);
-  const humidity = readNumber(input, 'humidity', HUMIDITY_RANGE, errors);
-  const transitDuration = readNumber(input, 'transitDuration', TRANSIT_DURATION_RANGE, errors);
+  const temperature = readNumber(input, 'temperature', VALID_RANGES.temperatureC, errors);
+  const humidity = readNumber(input, 'humidity', VALID_RANGES.humidityPct, errors);
+  const transitDuration = readNumber(input, 'transitDuration', VALID_RANGES.exposureHours, errors);
 
   if (errors.length > 0) return { ok: false, errors };
   return {
@@ -55,7 +56,7 @@ export function validateTelemetry(body: unknown): ValidationResult {
 function readNumber(
   input: Record<string, unknown>,
   key: string,
-  range: { min: number; max: number },
+  range: { readonly min: number; readonly max: number },
   errors: string[],
 ): number {
   const value = input[key];

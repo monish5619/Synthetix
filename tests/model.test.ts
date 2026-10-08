@@ -1,70 +1,108 @@
 import { describe, expect, it } from 'vitest';
-import {
-  applyInterval,
-  assess,
-  classifyRisk,
-  discountedPrice,
-  liquidationMarkdownPct,
-  thermalMultiplier,
-  humidityMultiplier,
-} from '../server/model';
-import { DEMO_SHIPMENT } from '../server/demo';
+import { MODEL_CONFIG, RISK_BANDS } from '../server/config';
+import { classifyRisk, evaluateExposure, humidityFactor, temperatureStress } from '../server/model';
 
-const profile = DEMO_SHIPMENT.profile;
-const baseline = { equivalentAgeHours: 0, transitRemainingHours: DEMO_SHIPMENT.transitHours };
-
-describe('degradation model', () => {
-  it('is neutral at the reference conditions', () => {
-    expect(thermalMultiplier(4, profile)).toBeCloseTo(1, 10);
-    expect(humidityMultiplier(60, profile)).toBe(1);
+const BASELINE = 120;
+const at = (temperatureC: number, humidityPct: number, exposureHours: number, cumulativeBefore = 0) =>
+  evaluateExposure({
+    baselineShelfLifeHours: BASELINE,
+    cumulativeBefore,
+    exposure: { temperatureC, humidityPct, exposureHours },
   });
 
-  it('starts at 120 h shelf life, LOW risk, 3.33× cover', () => {
-    const a = assess(profile, baseline, { temperatureC: 4, humidityPct: 60 });
-    expect(a.remainingShelfLifeHours).toBeCloseTo(120, 6);
-    expect(a.margin).toBeCloseTo(120 / 36, 6);
-    expect(a.riskLevel).toBe('LOW');
+describe('Q10 temperature stress', () => {
+  it('is exactly 1 at the ideal storage temperature', () => {
+    expect(temperatureStress(MODEL_CONFIG.idealTemperatureC)).toBe(1);
   });
 
-  it('doubles decay rate for each 10 °C above reference when Q10 = 2', () => {
-    expect(thermalMultiplier(14, { ...profile, q10: 2 })).toBeCloseTo(2, 10);
+  it('multiplies by Q10 for every 10 °C above the ideal', () => {
+    expect(temperatureStress(MODEL_CONFIG.idealTemperatureC + 10)).toBeCloseTo(MODEL_CONFIG.q10, 12);
   });
 
-  it('reproduces the ambient spike: ~18 h left, CRITICAL, ~34 % markdown', () => {
-    const next = applyInterval(profile, baseline, { temperatureC: 22, humidityPct: 80 }, 1.5);
-    const a = assess(profile, next, { temperatureC: 22, humidityPct: 80 });
+  it('slows ageing below the ideal temperature', () => {
+    expect(temperatureStress(MODEL_CONFIG.idealTemperatureC - 10)).toBeCloseTo(1 / MODEL_CONFIG.q10, 12);
+  });
+});
 
-    expect(a.thermalMultiplier).toBeCloseTo(Math.pow(2.5, 1.8), 6); // ≈ 5.20
-    expect(a.humidityMultiplier).toBeCloseTo(1.2, 10);
-    expect(a.remainingShelfLifeHours).toBeGreaterThan(17);
-    expect(a.remainingShelfLifeHours).toBeLessThan(18.5);
-    expect(a.transitRemainingHours).toBeCloseTo(34.5, 10);
-    expect(a.riskLevel).toBe('CRITICAL');
-    expect(liquidationMarkdownPct(a.margin)).toBe(34);
+describe('humidity factor', () => {
+  it('is 1 at or below the threshold', () => {
+    expect(humidityFactor(MODEL_CONFIG.humidityThresholdPct)).toBe(1);
+    expect(humidityFactor(30)).toBe(1);
   });
 
-  it('classifies risk by margin thresholds', () => {
-    expect(classifyRisk(2.5, 100)).toBe('LOW');
-    expect(classifyRisk(1.5, 100)).toBe('MODERATE');
-    expect(classifyRisk(1.1, 100)).toBe('HIGH');
-    expect(classifyRisk(0.9, 100)).toBe('CRITICAL');
-    expect(classifyRisk(3, 0)).toBe('CRITICAL');
+  it('adds the configured penalty per point above the threshold', () => {
+    expect(humidityFactor(90)).toBeCloseTo(1 + MODEL_CONFIG.humidityPenaltyPerPct * 30, 12);
+  });
+});
+
+describe('model scenarios', () => {
+  it('1. normal storage: 10 h at 4 °C / 60 % loses about 10 h and stays NORMAL', () => {
+    const r = at(4, 60, 10);
+    expect(r.temperatureStress).toBe(1);
+    expect(r.humidityFactor).toBe(1);
+    expect(r.equivalentAgeIncrement).toBeCloseTo(10 * MODEL_CONFIG.calibrationCoefficient, 10);
+    expect(r.remainingHours).toBeCloseTo(BASELINE - 10 * MODEL_CONFIG.calibrationCoefficient, 10);
+    expect(r.riskLevel).toBe('NORMAL');
   });
 
-  it('caps markdown at 60 % and prices ₹100/kg correctly', () => {
-    expect(liquidationMarkdownPct(-5)).toBe(60);
-    expect(discountedPrice(100, 34)).toBe(66);
+  it('2. moderate temperature rise (8 °C): stress is Q10^0.4 and ageing rises accordingly', () => {
+    const r = at(8, 60, 10);
+    expect(r.temperatureStress).toBeCloseTo(Math.pow(2.5, 0.4), 10);
+    expect(r.remainingHours).toBeLessThan(at(4, 60, 10).remainingHours);
+    expect(r.riskLevel).toBe('NORMAL');
   });
 
-  it('never lets shelf life go negative once reference life is spent', () => {
-    const next = applyInterval(profile, { equivalentAgeHours: 0, transitRemainingHours: 36 }, { temperatureC: 30, humidityPct: 90 }, 24);
-    const a = assess(profile, next, { temperatureC: 30, humidityPct: 90 });
-    expect(a.remainingShelfLifeHours).toBe(0);
-    expect(a.riskLevel).toBe('CRITICAL');
+  it('3. high temperature (22 °C, no humidity penalty): 10 h drops the shelf life into WATCH', () => {
+    const r = at(22, 60, 10);
+    expect(r.temperatureStress).toBeCloseTo(Math.pow(2.5, 1.8), 10);
+    expect(r.equivalentAgeIncrement).toBeCloseTo(10 * Math.pow(2.5, 1.8) * MODEL_CONFIG.calibrationCoefficient, 8);
+    expect(r.riskLevel).toBe('WATCH');
   });
 
-  it('does not let transit remaining go below zero', () => {
-    const next = applyInterval(profile, baseline, { temperatureC: 4, humidityPct: 60 }, 50);
-    expect(next.transitRemainingHours).toBe(0);
+  it('4. high humidity (90 %) at ideal temperature: ageing grows by the humidity factor alone', () => {
+    const r = at(4, 90, 10);
+    expect(r.temperatureStress).toBe(1);
+    expect(r.humidityFactor).toBeCloseTo(1 + MODEL_CONFIG.humidityPenaltyPerPct * 30, 12);
+    expect(r.equivalentAgeIncrement).toBeGreaterThan(at(4, 60, 10).equivalentAgeIncrement);
+  });
+
+  it('5. long exposure: ageing accumulates and remaining shelf life floors at zero', () => {
+    const hundred = at(4, 60, 100);
+    expect(hundred.remainingHours).toBeCloseTo(BASELINE - 100 * MODEL_CONFIG.calibrationCoefficient, 8);
+    expect(hundred.riskLevel).toBe('HIGH');
+
+    const beyond = at(4, 60, 130);
+    expect(beyond.remainingHours).toBe(0);
+    expect(beyond.riskLevel).toBe('CRITICAL');
+  });
+
+  it('cumulative ageing carries from one interval into the next', () => {
+    const first = at(22, 80, 4);
+    const second = at(4, 60, 2, first.cumulativeEquivalentAge);
+    expect(second.cumulativeEquivalentAge).toBeCloseTo(first.cumulativeEquivalentAge + second.equivalentAgeIncrement, 10);
+    expect(second.remainingHours).toBeCloseTo(BASELINE - second.cumulativeEquivalentAge, 10);
+  });
+
+  it('6. risk bands: thresholds are inclusive where the config says so', () => {
+    expect(classifyRisk(RISK_BANDS.normalAboveHours + 0.01)).toBe('NORMAL');
+    expect(classifyRisk(RISK_BANDS.normalAboveHours)).toBe('WATCH');
+    expect(classifyRisk(RISK_BANDS.watchAboveHours + 0.01)).toBe('WATCH');
+    expect(classifyRisk(RISK_BANDS.watchAboveHours)).toBe('HIGH');
+    expect(classifyRisk(RISK_BANDS.criticalBelowHours)).toBe('HIGH');
+    expect(classifyRisk(RISK_BANDS.criticalBelowHours - 0.01)).toBe('CRITICAL');
+    expect(classifyRisk(0)).toBe('CRITICAL');
+  });
+
+  it('explanations are deterministic and cite the numbers the model used', () => {
+    const a = at(22, 80, 14);
+    const b = at(22, 80, 14);
+    expect(a.explanation).toBe(b.explanation);
+    expect(a.explanation).toContain('22.0 °C');
+    expect(a.explanation).toContain('Elevated humidity');
+    expect(at(4, 60, 1).explanation).toContain('no thermal penalty applied');
+  });
+
+  it('rejects negative exposure instead of silently reversing ageing', () => {
+    expect(() => at(4, 60, -1)).toThrow(RangeError);
   });
 });
