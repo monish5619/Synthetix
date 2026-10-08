@@ -114,13 +114,13 @@ describe('Frost & Field stylesheet', () => {
 
   it('defines the required light tokens on :root', () => {
     const required: Array<[string, RegExp]> = [
-      ['--color-primary', /#1e3a5f/i],
-      ['--color-accent', /#22b8cf/i],
-      ['--color-safe', /#3b7bb5/i],
-      ['--color-watch', /#f2a541/i],
-      ['--color-critical', /#e5484d/i],
-      ['--color-bg', /#f6f8fb/i],
-      ['--color-text', /#16202d/i],
+      ['--color-primary', /#2f7d4a/i],
+      ['--color-accent', /#2e9fb3/i],
+      ['--color-safe', /#2f7d4a/i],
+      ['--color-watch', /#d98b20/i],
+      ['--color-critical', /#d64545/i],
+      ['--color-bg', /#f7f8f5/i],
+      ['--color-text', /#17201b/i],
     ];
     for (const [name, value] of required) expect(rootBlock).toMatch(new RegExp(`${name}:\\s*${value.source}`, 'i'));
     for (const name of ['--color-surface', '--color-muted', '--color-border', '--shadow-soft', '--radius-card']) {

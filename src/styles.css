@@ -12,32 +12,32 @@
   color-scheme: light;
 
   /* Brand */
-  --color-primary: #1e3a5f;
-  --color-accent: #22b8cf;
+  --color-primary: #2f7d4a;
+  --color-accent: #2e9fb3;
 
   /* Risk: fills and icons */
-  --color-safe: #3b7bb5;
-  --color-watch: #f2a541;
+  --color-safe: #2f7d4a;
+  --color-watch: #d98b20;
   --color-high: #e8772e;
-  --color-critical: #e5484d;
+  --color-critical: #d64545;
 
   /* Risk: text-safe variants (>= 4.5:1 on the light surface) */
-  --color-safe-text: #2a6496;
+  --color-safe-text: #256a3e;
   --color-watch-text: #8a5300;
   --color-high-text: #a14a0b;
   --color-critical-text: #c0292f;
   --color-accent-text: #0b7285;
 
   /* Surfaces and text */
-  --color-bg: #f6f8fb;
+  --color-bg: #f7f8f5;
   --color-surface: #ffffff;
-  --color-surface-2: #eef2f7;
-  --color-text: #16202d;
+  --color-surface-2: #f0f3ef;
+  --color-text: #17201b;
   --color-text-2: #384556;
-  --color-muted: #555f6d;
+  --color-muted: #66736b;
   --color-faint: #6b7584;
-  --color-border: #d7dee8;
-  --color-border-strong: #b3bfcf;
+  --color-border: #e4e8e3;
+  --color-border-strong: #cfd6d0;
   --color-on-primary: #ffffff;
 
   --shadow-soft: 0 1px 2px rgba(22, 32, 45, 0.06), 0 6px 18px -8px rgba(22, 32, 45, 0.14);
