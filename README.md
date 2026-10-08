@@ -38,7 +38,7 @@ Every run is stored as a snapshot with its full decomposition, and each step wri
 - **Server:** Node.js with Express 5, TypeScript run by `tsx`
 - **Database:** SQLite through Node's built-in `node:sqlite`. There are no native build steps.
 - **Frontend:** React 19 with Vite
-- **Tests:** Vitest, 59 tests. Model scenarios, the liquidation and alert engine, the official scenario, the primary-action endpoint, and the full API workflow.
+- **Tests:** Vitest. See "Architecture" for what is covered.
 
 ## Run it
 
@@ -156,3 +156,35 @@ shared/   Telemetry presets used by both the UI and tests
 src/      React control tower: App.tsx (state and actions), components/ (Masthead, Hero, ActionBar, Timeline, Liquidation, Explain, Activity), hooks.ts, styles.css
 tests/    Vitest suites for the model and the API
 ```
+
+## Three-minute judge demo
+
+1. `npm run build && npm run dev`, then open http://localhost:8787 (demo mode is on by default outside production).
+2. On the **Control Tower**, click **RUN 3-MIN JUDGE DEMO**. A 7-step tracker runs on the real backend; each headline is copied from a server response:
+   1. **Reset**: the demo shipment returns to 120 h, NORMAL.
+   2. **Normal shipment**: 120.0 h · NORMAL, read from the database.
+   3. **Spike**: 30 °C, 85% RH. The server previews first (nothing saved), then commits through the telemetry pipeline. Temperature ×10.83, humidity ×1.50, +102.35 h ageing.
+   4. **Shelf life collapses**: 17.7 h · CRITICAL.
+   5. **Automatic markdown**: 35% off, ₹100 → ₹65/kg.
+   6. **Deal and alert**: the listing is repriced and a retailer alert exists (delivery is simulated: no SMS or WhatsApp provider).
+   7. **Rescue**: the retailer claims the stock; the quantity drops atomically and the card says RESCUED.
+3. Refresh the page: the state is on the server, not in the browser. Check **Marketplace**, **Alerts** (and the bell), **Telemetry** and **Fleet**.
+4. Open **Why did shelf life drop?** on the Control Tower for the model's working with the stored values, or the **Telemetry simulator** to preview and commit your own readings.
+
+If a step cannot be confirmed by the server (no markdown, no listing, no alert) the tracker turns that step red and stops. It never shows success it did not get.
+
+## Architecture
+
+```
+Browser (React)  ──HTTP──▶  Express API  ──▶  ingest pipeline (one SQLite transaction)
+   ▲  SSE "changed" nudge       │               telemetry event → degradation model → snapshot
+   └────────────────────────────┘               → risk → liquidation → listing → alert → audit
+```
+
+- The **model, risk bands and markdown policy** live only in `server/` and are deterministic (see above). The UI never recomputes them: it renders stored rows or `POST /api/shipments/:id/preview`, which runs the same functions read-only.
+- **Writes** go through one pipeline transaction, so a reading is stored in full or not at all. Browser demo routes (`simulate`, `preview`, `reset`) are gated by `DEMO_MODE`; `POST /api/telemetry` needs the `X-Ingest-Key`, which the browser never holds.
+- **Claims** (`POST /api/listings/:id/claim`) check and decrease stock in one transaction and are idempotent with an `Idempotency-Key`. There is no login yet; role-based auth is deferred.
+- **`GET /api/stream`** (server-sent events) only says "something changed"; clients refetch from the normal API, and everything still works by polling if the stream is down.
+- **Fleet** shipments are seeded only in demo mode, through the real pipeline.
+
+Run the tests with `npm test` (332 tests: model, pipeline, API, security, preview, claims, demo runner, UI states).

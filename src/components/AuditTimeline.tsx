@@ -17,17 +17,23 @@ const GROUP: Record<string, 'telemetry' | 'model' | 'risk' | 'market' | 'alert' 
   MARKETPLACE_UPDATED: 'market',
   RETAILER_ALERT_GENERATED: 'alert',
   SHIPMENT_INITIALIZED: 'system',
+  LISTING_CLAIMED: 'market',
+  RETAILER_ACKNOWLEDGED: 'alert',
 };
 
-const DESCRIPTION: Record<string, string> = {
-  TELEMETRY_RECEIVED: 'A reading was validated and stored',
-  SHELF_LIFE_RECALCULATED: 'The degradation model produced a new snapshot',
-  RISK_ESCALATED: 'The risk level moved up a band',
-  LIQUIDATION_RECOMMENDED: 'The liquidation engine set a markdown',
-  MARKETPLACE_UPDATED: 'The marketplace listing was repriced',
-  RETAILER_ALERT_GENERATED: 'A spoilage alert was written for the retailer',
-  SHIPMENT_INITIALIZED: 'The shipment was created at its baseline',
+const ICON: Record<string, string> = {
+  TELEMETRY_RECEIVED: '📡',
+  SHELF_LIFE_RECALCULATED: '⏳',
+  RISK_ESCALATED: '⚠',
+  LIQUIDATION_RECOMMENDED: '🏷',
+  MARKETPLACE_UPDATED: '🛒',
+  RETAILER_ALERT_GENERATED: '🔔',
+  SHIPMENT_INITIALIZED: '🚚',
+  LISTING_CLAIMED: '✅',
+  RETAILER_ACKNOWLEDGED: '👍',
 };
+
+const label = (type: string) => type.replace(/_/g, ' ').toLowerCase().replace(/^./, (c) => c.toUpperCase());
 
 /** Oldest first, so the timeline reads in the order the backend acted. */
 export function AuditTimeline({ entries, fresh }: { entries: AuditItem[]; fresh: Set<string> }) {
@@ -41,16 +47,15 @@ export function AuditTimeline({ entries, fresh }: { entries: AuditItem[]; fresh:
         const group = GROUP[e.eventType] ?? 'system';
         return (
           <li key={e.id} className={`op-item group-${group} ${fresh.has(e.id) ? 'is-new' : ''}`}>
-            <span className="op-node" aria-hidden="true" />
+            <span className="op-node" aria-hidden="true">{ICON[e.eventType] ?? '•'}</span>
             <div className="op-body">
               <div className="op-head">
-                <span className="op-type">{e.eventType}</span>
+                <span className="op-type">{label(e.eventType)}</span>
                 <time dateTime={e.createdAt}>{clock(e.createdAt)}</time>
               </div>
               <p className="op-summary">{e.summary}</p>
-              <p className="op-desc">{DESCRIPTION[e.eventType] ?? ''}</p>
               <details className="op-detail">
-                <summary>Recorded detail</summary>
+                <summary aria-label="Show details">{'{ }'}</summary>
                 <pre>{JSON.stringify(JSON.parse(e.detailJson), null, 2)}</pre>
               </details>
             </div>

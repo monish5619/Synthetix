@@ -21,6 +21,8 @@ function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   return fetch(API_BASE + path, { ...init, credentials: 'omit', cache: 'no-store' });
 }
 
+import type { RiskLevel } from '../server/config';
+import type { TelemetryPreview } from '../server/preview';
 import type { ShipmentDetail, TelemetryEventView } from '../server/pipeline';
 import type { ScenarioName, SimulatedReading } from '../server/simulator';
 
@@ -32,8 +34,9 @@ export interface ShipmentSummary {
   currentTemperature: number;
   currentHumidity: number;
   remainingHours: number;
-  riskLevel: string;
+  riskLevel: RiskLevel;
   currentPricePerKg: number;
+  baselineShelfLifeHours: number;
 }
 
 /** Response of a scenario run: the reading the server generated, the persisted event, and the full state. */
@@ -76,6 +79,33 @@ export async function simulateNormal(shipmentId: string): Promise<ScenarioResult
   return readJson<ScenarioResult>(await apiFetch(`/api/shipments/${shipmentId}/simulate-normal`, { method: 'POST' }));
 }
 
+/** A reading to try or commit in the simulator. The server validates every field. */
+export interface Reading {
+  temperature: number;
+  humidity: number;
+  transitDuration: number;
+}
+
+/** What the reading WOULD do, from the real model. Read-only: nothing is saved. */
+export async function previewReading(shipmentId: string, reading: Reading): Promise<TelemetryPreview> {
+  return readJson<TelemetryPreview>(
+    await apiFetch(`/api/shipments/${shipmentId}/preview`, jsonPost(reading)),
+  );
+}
+
+/** Commits a reading through the real telemetry pipeline. */
+export async function simulateReading(shipmentId: string, reading: Reading): Promise<Pick<ScenarioResult, 'event' | 'shipment'>> {
+  return readJson<Pick<ScenarioResult, 'event' | 'shipment'>>(
+    await apiFetch(`/api/shipments/${shipmentId}/simulate`, jsonPost(reading)),
+  );
+}
+
+const jsonPost = (body: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
 export async function resetShipment(shipmentId: string): Promise<ShipmentDetail> {
   return readJson<ShipmentDetail>(await apiFetch(`/api/shipments/${shipmentId}/reset`, { method: 'POST' }));
 }
@@ -87,6 +117,9 @@ export interface HealthReport {
   liquidationEngine: 'READY' | 'FAILED';
   checkedAt: string;
 }
+
+/** The URL of the live-change stream (server-sent events). */
+export const STREAM_URL = API_BASE + '/api/stream';
 
 export async function fetchHealth(): Promise<HealthReport> {
   return readJson<HealthReport>(await apiFetch('/api/health'));
@@ -110,6 +143,9 @@ export interface MarketplaceListing {
   discountPct: number;
   listingStatus: string;
   availableKg: number;
+  lotKg: number;
+  claimedKg: number;
+  baselineShelfLifeHours: number;
   urgency: Urgency;
   updatedAt: string;
 }
@@ -140,6 +176,9 @@ export interface HistoryEntry {
   remainingHours: number | null;
   riskLevel: 'NORMAL' | 'WATCH' | 'HIGH' | 'CRITICAL' | null;
   explanation: string | null;
+  temperatureStress: number | null;
+  humidityFactor: number | null;
+  equivalentAgeIncrement: number | null;
 }
 
 export async function fetchMarketplace(): Promise<MarketplaceListing[]> {
@@ -156,4 +195,24 @@ export async function fetchTelemetryHistory(shipmentId: string): Promise<History
 
 export async function acknowledgeAlert(alertId: string): Promise<AlertItem> {
   return (await readJson<{ alert: AlertItem }>(await apiFetch(`/api/alerts/${alertId}/acknowledge`, { method: 'POST' }))).alert;
+}
+
+export interface ClaimResult {
+  claimId: string;
+  listingId: string;
+  quantityKg: number;
+  pricePerKg: number;
+  discountPct: number;
+  totalValue: number;
+  listing: MarketplaceListing;
+}
+
+/** Claims stock from a listing. The Idempotency-Key makes a double click harmless. */
+export async function claimListing(listingId: string, quantityKg?: number): Promise<ClaimResult> {
+  const res = await apiFetch(`/api/listings/${listingId}/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `claim-${listingId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` },
+    body: JSON.stringify(quantityKg === undefined ? {} : { quantityKg }),
+  });
+  return (await readJson<{ claim: ClaimResult }>(res)).claim;
 }

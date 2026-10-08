@@ -99,6 +99,8 @@ export interface ShipmentSummary {
   remainingHours: number;
   riskLevel: RiskLevel;
   currentPricePerKg: number;
+  /** The reference shelf life, so a view can draw remaining life as a share of it. */
+  baselineShelfLifeHours: number;
 }
 
 export function listShipments(db: Db): ShipmentSummary[] {
@@ -117,6 +119,7 @@ export function listShipments(db: Db): ShipmentSummary[] {
       remainingHours,
       riskLevel,
       currentPricePerKg: currentPricePerKg(db, row.id),
+      baselineShelfLifeHours: row.baseline_shelf_life_hours,
     };
   });
 }

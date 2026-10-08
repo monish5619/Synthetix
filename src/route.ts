@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react';
 
-export const ROUTES = ['control', 'marketplace', 'telemetry', 'alerts'] as const;
+/**
+ * Every page the navigation knows about. The first four have always existed.
+ * The rest are reserved so the shell and its links are stable now; their pages
+ * say plainly that they are not built yet (see shell/nav.ts → `built`).
+ */
+export const ROUTES = [
+  'control',
+  'fleet',
+  'marketplace',
+  'telemetry',
+  'alerts',
+  'impact',
+  'explainability',
+  'admin',
+  'status',
+] as const;
 export type Route = (typeof ROUTES)[number];
 
 const readRoute = (): Route => {
@@ -21,7 +36,12 @@ export function useRoute(): Route {
 
 export const ROUTE_HREF: Record<Route, string> = {
   control: '#/',
+  fleet: '#/fleet',
   marketplace: '#/marketplace',
   telemetry: '#/telemetry',
   alerts: '#/alerts',
+  impact: '#/impact',
+  explainability: '#/explainability',
+  admin: '#/admin',
+  status: '#/status',
 };

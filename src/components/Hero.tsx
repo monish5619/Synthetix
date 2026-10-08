@@ -1,16 +1,20 @@
-import type { ShipmentDetail } from '../../server/pipeline';
-import { RISK_COPY, daysLabel, hours, signedHours } from '../format';
 import { useEffect, useRef, useState } from 'react';
+import type { ShipmentDetail } from '../../server/pipeline';
+import { hours, signedHours } from '../format';
 import { useTween } from '../hooks';
-import { Journey } from './Journey';
+import { CountUp } from '../ui/CountUp';
+import { InfoTip } from '../ui/InfoTip';
+import { Badge } from '../ui/layout';
+import { RouteMap } from './RouteMap';
+import { ShelfGauge } from './ShelfGauge';
 
 interface Props {
   state: ShipmentDetail;
-  /** Milliseconds to hold the previous number while the story reveal plays. */
+  /** Milliseconds to hold the previous numbers while the story reveal plays. */
   holdMs: number;
 }
 
-/** The shelf-life number is the one thing the eye should land on. Everything else supports it. */
+/** The headline of the page: the gauge, the live conditions, and the road. */
 export function Hero({ state, holdMs }: Props) {
   const { current } = state;
   const level = current.riskLevel;
@@ -26,57 +30,51 @@ export function Hero({ state, holdMs }: Props) {
     }
     previous.current = level;
   }, [level]);
-  const risk = RISK_COPY[level];
+
   const remaining = useTween(current.remainingHours, { duration: 900, delay: holdMs });
   const transit = useTween(current.transitRemainingHours, { duration: 900, delay: holdMs });
   const arrivalMargin = remaining - transit;
+  const spoilsFirst = current.remainingHours - current.transitRemainingHours < 0;
 
   return (
-    <section className={`hero risk-${level} ${sweep ? 'is-sweeping' : ''}`} aria-labelledby="hero-title">
-      <div className="hero-top">
-        <div className="hero-core">
-          <p className="eyebrow" id="hero-title">
-            Remaining shelf life
-          </p>
-          <div className="hero-number" aria-live="polite" aria-label={`${remaining.toFixed(1)} hours remaining`}>
-            <span className="hero-value">{remaining.toFixed(1)}</span>
-            <span className="hero-unit">hours</span>
-          </div>
-          <p className="hero-days">{daysLabel(remaining)} at the model estimate</p>
-          <div className="risk-line">
-            <span className="risk-pip" aria-hidden="true" />
-            <span className="risk-label">{risk.label}</span>
-          </div>
-          <p className="risk-note">{risk.note}</p>
-        </div>
+    <section className={`ct-hero risk-${level} ${sweep ? 'is-sweeping' : ''}`} aria-label="Remaining shelf life">
+      <div className="ct-hero-main">
+        <ShelfGauge state={state} holdMs={holdMs} />
 
-        <aside className="conditions" aria-label="Current conditions">
-          <Reading label="Temperature" value={current.temperature.toFixed(1)} unit="°C" />
-          <Reading label="Humidity" value={current.humidity.toFixed(0)} unit="% RH" />
-          <Reading label="Transit left" value={hours(transit)} unit="h" />
-          <div className="reading reading-wide">
-            <span className="reading-label">Arrival margin</span>
-            <span className={`reading-value ${arrivalMargin < 0 ? 'is-bad' : ''}`}>{signedHours(arrivalMargin)}</span>
-            <span className="reading-note">
-              {arrivalMargin < 0 ? 'Produce spoils before it arrives.' : 'Produce arrives inside its shelf life.'}
-            </span>
+        <dl className="metrics">
+          <div className="metric">
+            <dt>Temperature</dt>
+            <dd>
+              <CountUp value={current.temperature} decimals={1} delay={holdMs} />
+              <small>°C</small>
+            </dd>
           </div>
-        </aside>
+          <div className="metric">
+            <dt>Humidity</dt>
+            <dd>
+              <CountUp value={current.humidity} decimals={0} delay={holdMs} />
+              <small>% RH</small>
+            </dd>
+          </div>
+          <div className="metric">
+            <dt>Transit left</dt>
+            <dd>
+              {hours(transit)}
+              <small>h</small>
+            </dd>
+          </div>
+          <div className={`metric metric-margin ${spoilsFirst ? 'is-bad' : ''}`}>
+            <dt>
+              Arrival margin
+              <InfoTip about="arrival margin" text="Remaining shelf life minus the transit time still to run. Negative means the produce spoils before it arrives." />
+            </dt>
+            <dd>{signedHours(arrivalMargin)}</dd>
+            <Badge tone={spoilsFirst ? 'critical' : 'safe'}>{spoilsFirst ? 'Spoils before arrival' : 'Arrives fresh'}</Badge>
+          </div>
+        </dl>
       </div>
 
-      <Journey state={state} />
+      <RouteMap state={state} />
     </section>
-  );
-}
-
-function Reading({ label, value, unit }: { label: string; value: string; unit: string }) {
-  return (
-    <div className="reading">
-      <span className="reading-label">{label}</span>
-      <span className="reading-value">
-        {value}
-        <small>{unit}</small>
-      </span>
-    </div>
   );
 }

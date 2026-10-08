@@ -61,7 +61,7 @@ export function Explain({ state }: { state: ShipmentDetail }) {
   return (
     <details className="explain">
       <summary>
-        <span className="explain-title">Why did shelf life change?</span>
+        <span className="explain-title">Full ageing breakdown</span>
         <span className="explain-hint">model {current.modelVersion || model.modelVersion} · values from the server</span>
       </summary>
       <div className="explain-body">

@@ -48,3 +48,20 @@ export function useTween(target: number, { duration = 1000, delay = 0 } = {}) {
 
   return value;
 }
+
+/** Tracks an element's width in px, so a chart can be drawn at the size it will actually be shown. */
+export function useElementWidth<T extends HTMLElement>(fallback = 800) {
+  const ref = useRef<T>(null);
+  const [width, setWidth] = useState(fallback);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setWidth(Math.round(el.getBoundingClientRect().width) || fallback);
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [fallback]);
+  return [ref, width] as const;
+}

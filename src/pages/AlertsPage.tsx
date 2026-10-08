@@ -1,11 +1,17 @@
 import { useState } from 'react';
 import { acknowledgeAlert, fetchAlerts, type AlertItem } from '../api';
-import { RISK_COPY, clock, hours, rupees } from '../format';
+import { alertHeadline, unreadCount } from '../alerts';
+import { RiskBadge } from '../components/RiskBadge';
+import { clock, hours, rupees } from '../format';
+import { useChangeStream } from '../live';
 import { usePoll } from '../poll';
+import { InfoTip } from '../ui/InfoTip';
+import { EmptyState, ErrorState, PageHeader, Skeleton } from '../ui/layout';
 
-/** Alerts are read from the database. Acknowledging one writes back to the database, and the page shows what was stored. */
+/** Alerts are read from the database. Acknowledging one writes back, and the page shows what was stored. */
 export function AlertsPage() {
-  const { data, error, loading, syncedAt, reload } = usePoll(fetchAlerts, 4000);
+  const { data, error, loading, reload } = usePoll(fetchAlerts, 4000);
+  useChangeStream(() => reload());
   const [acking, setAcking] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -23,20 +29,13 @@ export function AlertsPage() {
   }
 
   return (
-    <section className="page" aria-labelledby="al-title">
-      <header className="page-head">
-        <div>
-          <p className="eyebrow">Spoilage alerts</p>
-          <h1 id="al-title">Alerts</h1>
-        </div>
-        <span className="panel-meta">
-          {syncedAt ? `Synced ${clock(syncedAt.toISOString())} · refreshes every 4 s` : 'Loading…'}
-        </span>
-      </header>
+    <section className="page" aria-labelledby="page-title">
+      <PageHeader title="Alerts" subtitle={data ? `${unreadCount(data)} unread · ${data.length} total` : undefined} />
 
-      {error && (
+      {error && !data && <ErrorState title="We can't load alerts" message={`${error} Check that the server is running, then try again.`} onRetry={reload} />}
+      {error && data && (
         <p className="notice is-error" role="alert">
-          {data ? `Showing the last synced alerts. ${error}` : error}
+          Showing the last synced alerts. {error}
         </p>
       )}
       {actionError && (
@@ -44,14 +43,8 @@ export function AlertsPage() {
           {actionError}
         </p>
       )}
-      {loading && !data && <p className="quiet" role="status">Loading alerts from the database…</p>}
-
-      {data && data.length === 0 && (
-        <div className="empty-state">
-          <p className="empty-title">No spoilage alerts</p>
-          <p>An alert is recorded when risk escalates to high or critical. Run the spike on the Control Tower to see one.</p>
-        </div>
-      )}
+      {loading && !data && <Skeleton height={96} />}
+      {data && data.length === 0 && <EmptyState icon="bell" title="No spoilage alerts" hint="An alert is recorded when risk reaches high or critical." />}
 
       {data && data.length > 0 && (
         <ul className="alert-list">
@@ -65,50 +58,37 @@ export function AlertsPage() {
 }
 
 function AlertCard({ alert: a, busy, onAcknowledge }: { alert: AlertItem; busy: boolean; onAcknowledge: () => void }) {
-  const critical = a.severity === 'CRITICAL';
   return (
-    <li className={`alert-card ${critical ? 'is-critical' : 'is-high'}`}>
+    <li className={`alert-card ${a.severity === 'CRITICAL' ? 'is-critical' : 'is-high'} ${a.acknowledgedAt ? 'is-read' : ''}`}>
       <div className="alert-card-head">
-        <span className="alert-kicker">{critical ? 'Critical spoilage alert' : 'High spoilage alert'}</span>
+        <RiskBadge level={a.severity} />
         <time dateTime={a.createdAt}>{clock(a.createdAt)}</time>
       </div>
-      <h2 className="alert-title">Shipment {a.code}</h2>
+      <h2 className="alert-title">{alertHeadline(a)}</h2>
       <p className="alert-meta">
-        {a.produce} · <strong>{hours(a.remainingHours)} hours remaining</strong> · {RISK_COPY[a.severity].label}
-      </p>
-
-      <dl className="alert-facts">
-        <div>
-          <dt>Recommended action</dt>
-          <dd>{a.recommendedAction}</dd>
-        </div>
-        {a.markdownPct !== null && (
-          <div>
-            <dt>Markdown</dt>
-            <dd>
-              {a.markdownPct}%
-              {a.recommendedPricePerKg !== null && <span className="cell-sub"> · {rupees(a.recommendedPricePerKg)}/kg</span>}
-            </dd>
-          </div>
+        {a.produce} · {a.code} · <strong>{hours(a.remainingHours)} h left</strong>
+        {a.markdownPct !== null && a.recommendedPricePerKg !== null && (
+          <>
+            {' '}
+            · {a.markdownPct}% off → {rupees(a.recommendedPricePerKg)}/kg
+          </>
         )}
-        <div>
-          <dt>Recipient</dt>
-          <dd>{a.recipient}</dd>
-        </div>
-      </dl>
-      <p className="alert-message">{a.message}</p>
-
+      </p>
+      <p className="alert-delivery">
+        Sent to {a.recipient} · SMS / WhatsApp — simulated
+        <InfoTip about="delivery" text="No real message is sent. A production build would hand this alert to an SMS or WhatsApp provider." />
+      </p>
       <div className="alert-ack">
         {a.acknowledgedAt ? (
           <p className="ack-done">
             <span className="check" aria-hidden="true">
               ✓
-            </span>
-            Acknowledged by the retailer at {clock(a.acknowledgedAt)}
+            </span>{' '}
+            Acknowledged {clock(a.acknowledgedAt)}
           </p>
         ) : (
           <button type="button" className="btn btn-secondary" disabled={busy} onClick={onAcknowledge}>
-            {busy ? 'Recording…' : 'Acknowledge offer'}
+            {busy ? 'Recording…' : 'Acknowledge'}
           </button>
         )}
       </div>

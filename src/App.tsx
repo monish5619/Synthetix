@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ShipmentDetail } from '../server/pipeline';
 import {
   fetchHealth,
@@ -6,24 +6,39 @@ import {
   fetchShipments,
   resetShipment,
   simulateNormal,
+  simulateReading,
   simulateSpike,
   type HealthReport,
+  type Reading,
   type ScenarioResult,
 } from './api';
 import { ActionBar, type ActionKind, type RunStatus } from './components/ActionBar';
 import { Explain } from './components/Explain';
+import { WhyDrop } from './components/WhyDrop';
+import { JudgeDemo } from './components/JudgeDemo';
+import { useJudgeDemo } from './demo/useJudgeDemo';
+import { SimulatorPanel } from './components/SimulatorPanel';
+import { useChangeStream } from './live';
+import { FleetPage } from './pages/FleetPage';
+import { pickShipment, useSelectedShipmentId } from './selection';
 import { Hero } from './components/Hero';
 import { Liquidation } from './components/Liquidation';
-import { Masthead, SystemFooter } from './components/Masthead';
+import { SystemFooter } from './components/SystemFooter';
 import { StoryRail } from './components/StoryRail';
 import { Timeline } from './components/Timeline';
-import { clock } from './format';
+import { hours } from './format';
 import { AlertsPage } from './pages/AlertsPage';
 import { MarketplacePage } from './pages/MarketplacePage';
 import { TelemetryPage } from './pages/TelemetryPage';
 import { useRoute } from './route';
+import { ComingSoonPage } from './pages/ComingSoonPage';
+import { StatusPage } from './pages/StatusPage';
+import { Shell } from './shell/Shell';
+import { HEARTBEAT_MS } from './shell/status';
+import { addToast, removeToast, type Toast, type ToastKind } from './toasts';
+import { ToastRegion } from './ui/Toast';
+import { ErrorState, Skeleton } from './ui/layout';
 
-const HEALTH_POLL_MS = 15000;
 /** Number of story stages. The reveal lights them in order, one every REVEAL_MS. */
 const STAGE_COUNT = 7;
 const REVEAL_MS = 420;
@@ -39,7 +54,7 @@ const CONFIRMATIONS: Array<{ eventType: string; label: string }> = [
   { eventType: 'RETAILER_ALERT_GENERATED', label: 'Retailer alert generated' },
 ];
 
-function confirmationsFor(result: ScenarioResult): string[] {
+function confirmationsFor(result: Pick<ScenarioResult, 'event' | 'shipment'>): string[] {
   const { event, shipment } = result;
   const persisted = shipment.telemetry.some((t) => t.id === event.id);
   const types = new Set(shipment.audit.filter((a) => a.createdAt === event.recordedAt).map((a) => a.eventType));
@@ -53,14 +68,50 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthReport | null>(null);
+  /** When the server last answered, as a timestamp. It feeds the "Live • synced 2s ago" pill, so it only ever moves on a real response. */
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
   const [healthError, setHealthError] = useState(false);
   const [busy, setBusy] = useState<ActionKind | null>(null);
   const [run, setRun] = useState<RunStatus | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastId = useRef(0);
+  const notify = useCallback((kind: ToastKind, text: string) => {
+    setToasts((list) => addToast(list, { id: ++toastId.current, kind, text }));
+  }, []);
+  const dismissToast = useCallback((id: number) => setToasts((list) => removeToast(list, id)), []);
   /** Stages revealed so far. Infinity means everything is shown, which is the steady state. */
   const [revealed, setRevealed] = useState<number>(Infinity);
   const [playing, setPlaying] = useState(false);
   const route = useRoute();
+  const selectedId = useSelectedShipmentId();
+  const lastReading = useRef<Reading | null>(null);
+
+  const demo = useJudgeDemo({
+    onState: useCallback((next: ShipmentDetail) => {
+      setState(next);
+      setLastSyncedAt(Date.now());
+    }, []),
+    onReset: useCallback(() => {
+      setRun(null);
+      setRevealed(Infinity);
+      setPlaying(false);
+    }, []),
+    onSpikeCommitted: useCallback(() => {
+      setRevealed(1);
+      setPlaying(true);
+    }, []),
+  });
+
+  async function runDemo() {
+    if (!state || busy) return;
+    setBusy('demo');
+    try {
+      await demo.start(state.shipment.id);
+    } finally {
+      setBusy(null);
+      void fetchHealth().then(setHealth).catch(() => setHealthError(true));
+    }
+  }
 
   /** Loads the first persisted shipment. Nothing about it is hard-coded in the UI. */
   const load = useCallback(async () => {
@@ -69,13 +120,16 @@ export function App() {
     try {
       const list = await fetchShipments();
       if (list.length === 0) throw new Error('No shipments are persisted on the server.');
-      setState(await fetchShipment(list[0].id));
+      const chosen = pickShipment(list, selectedId);
+      if (!chosen) throw new Error('No shipments are persisted on the server.');
+      setState(await fetchShipment(chosen.id));
+      setLastSyncedAt(Date.now());
     } catch (err) {
       setLoadError(messageOf(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedId]);
 
   useEffect(() => {
     void load();
@@ -90,10 +144,11 @@ export function App() {
           if (!alive) return;
           setHealth(h);
           setHealthError(false);
+          setLastSyncedAt(Date.now());
         })
         .catch(() => alive && setHealthError(true));
     void check();
-    const timer = window.setInterval(check, HEALTH_POLL_MS);
+    const timer = window.setInterval(check, HEARTBEAT_MS);
     return () => {
       alive = false;
       window.clearInterval(timer);
@@ -118,11 +173,11 @@ export function App() {
   async function runAction(kind: 'spike' | 'normal') {
     if (!state || busy) return;
     setBusy(kind === 'spike' ? 'spike' : 'normal');
-    setActionError(null);
     setRun({ kind, phase: 'pending', confirmations: [] });
     try {
       const result = await (kind === 'spike' ? simulateSpike : simulateNormal)(state.shipment.id);
       setState(result.shipment);
+      setLastSyncedAt(Date.now());
       setRun({ kind, phase: 'confirmed', confirmations: confirmationsFor(result) });
       if (kind === 'spike') {
         setRevealed(1);
@@ -139,59 +194,105 @@ export function App() {
     }
   }
 
+  /**
+   * Commit from the simulator: the reading goes through the same validation and the same
+   * telemetry pipeline as everything else, and the screen changes only once the server confirms.
+   */
+  async function commitReading(reading: Reading) {
+    if (!state || busy) return;
+    lastReading.current = reading;
+    setBusy('custom');
+    setRun({ kind: 'custom', phase: 'pending', confirmations: [] });
+    try {
+      const result = await simulateReading(state.shipment.id, reading);
+      setState(result.shipment);
+      setLastSyncedAt(Date.now());
+      setRun({ kind: 'custom', phase: 'confirmed', confirmations: confirmationsFor(result) });
+      setRevealed(1);
+      setPlaying(true);
+      void fetchHealth().then(setHealth).catch(() => setHealthError(true));
+    } catch (err) {
+      setRun({ kind: 'custom', phase: 'failed', confirmations: [], message: messageOf(err) });
+      throw err;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function retry() {
+    if (!run) return;
+    if (run.kind === 'custom') {
+      if (lastReading.current) void commitReading(lastReading.current).catch(() => undefined);
+    } else {
+      void runAction(run.kind);
+    }
+  }
+
+  // Live updates: the server nudges after every successful write, and we refetch the real state.
+  useChangeStream((change) => {
+    if (!state || busy !== null || change.shipmentId !== state.shipment.id) return;
+    void fetchShipment(state.shipment.id)
+      .then((next) => {
+        setState(next);
+        setLastSyncedAt(Date.now());
+      })
+      .catch(() => undefined);
+  });
+
   async function reset() {
     if (!state || busy) return;
     setBusy('reset');
     setRun(null);
     setRevealed(Infinity);
     setPlaying(false);
-    setActionError(null);
     try {
-      setState(await resetShipment(state.shipment.id));
+      // The real reset: the server restores the demo shipment, and the screen shows what it returns.
+      const next = await resetShipment(state.shipment.id);
+      setState(next);
+      setLastSyncedAt(Date.now());
+      notify('success', `Demo reset · shelf life is back to ${hours(next.current.remainingHours)} h`);
     } catch (err) {
-      setActionError(messageOf(err));
+      notify('error', `Reset failed · ${messageOf(err)} Nothing was changed.`);
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div className="app">
-      <Masthead route={route} />
-
+    <Shell
+      route={route}
+      sync={{ lastSyncedAt, failed: healthError, health }}
+      footer={<SystemFooter health={health} healthError={healthError} />}
+    >
       {route === 'marketplace' && <MarketplacePage />}
       {route === 'telemetry' && <TelemetryPage />}
       {route === 'alerts' && <AlertsPage />}
+      {route === 'status' && <StatusPage health={health} failed={healthError} />}
+      {route === 'fleet' && <FleetPage />}
+      {(route === 'impact' || route === 'explainability' || route === 'admin') && (
+        <ComingSoonPage route={route} />
+      )}
 
-      {route === 'control' && loading && !state && <Skeleton />}
+      {route === 'control' && loading && !state && <ControlTowerSkeleton />}
 
       {route === 'control' && loadError && !state && (
-        <section className="notice-panel" role="alert">
-          <p className="eyebrow">Shipment unavailable</p>
-          <p>{loadError}</p>
-          <button type="button" className="btn btn-secondary" onClick={() => void load()}>
-            Try again
-          </button>
-        </section>
+        <ErrorState title="We can't load the control tower" message={`${loadError} Check that the server is running, then try again.`} onRetry={() => void load()} />
       )}
 
       {route === 'control' && state && (
         <>
-          <header className="thesis">
-            <p className="eyebrow">Cold-chain monitoring · predictive shelf life · automated liquidation</p>
-            <p className="thesis-line">
-              Produce loses its value in transit before anyone can see it. AgroSense reads the cold chain, predicts the
-              shelf life left, and reprices the produce before it spoils.
-            </p>
-            <p className="shipment-line">
+          <header className="ct-head">
+            <h1 className="ct-tagline">Predict shelf life. Sell before it spoils.</h1>
+            <p className="ct-meta">
               <span className="code">{state.shipment.code}</span> {state.shipment.produce}
               <span className="muted">
                 {' '}
                 · {state.shipment.origin} → {state.shipment.destination} · {state.shipment.quantityKg.toLocaleString()} kg
-                · updated {clock(state.shipment.updatedAt)}
               </span>
             </p>
           </header>
+
+          <JudgeDemo steps={demo.steps} phase={demo.phase} error={demo.error} elapsedMs={demo.elapsedMs} disabled={busy !== null} onRun={() => void runDemo()} />
 
           <Hero state={state} holdMs={playing ? NUMBER_HOLD_MS : 0} />
 
@@ -200,12 +301,15 @@ export function App() {
           <ActionBar
             busy={busy}
             run={run}
-            loadError={actionError}
             onSpike={() => runAction('spike')}
             onNormal={() => runAction('normal')}
             onReset={reset}
-            onRetry={() => run && runAction(run.kind)}
+            onRetry={retry}
           />
+
+          <SimulatorPanel shipmentId={state.shipment.id} disabled={busy !== null} onCommit={commitReading} />
+
+          <WhyDrop state={state} />
 
           <div className="board">
             <Timeline state={state} />
@@ -215,17 +319,22 @@ export function App() {
         </>
       )}
 
-      <SystemFooter health={health} healthError={healthError} />
-    </div>
+      <ToastRegion toasts={toasts} onDismiss={dismissToast} />
+    </Shell>
   );
 }
 
-function Skeleton() {
+function ControlTowerSkeleton() {
   return (
     <div className="skeleton" role="status" aria-live="polite" aria-label="Loading the control tower">
-      <div className="sk sk-hero" />
-      <div className="sk sk-bar" />
-      <div className="sk sk-board" />
+      <Skeleton height={44} width="min(520px, 80%)" />
+      <div className="sk-hero-row">
+        <Skeleton height={300} width={300} />
+        <Skeleton height={300} />
+      </div>
+      <Skeleton height={130} />
+      <Skeleton height={96} />
+      <Skeleton height={380} />
     </div>
   );
 }

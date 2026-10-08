@@ -1,117 +1,123 @@
-import { fetchMarketplace, type MarketplaceListing, type Urgency } from '../api';
-import { RISK_COPY, clock, daysLabel, hours, rupees } from '../format';
+import { useState } from 'react';
+import { claimListing, fetchMarketplace, type MarketplaceListing } from '../api';
+import { dealReason, policyExplanation } from '../alerts';
+import { MiniGauge } from '../components/MiniGauge';
+import { RiskBadge } from '../components/RiskBadge';
+import { hours, rupees } from '../format';
+import { useChangeStream } from '../live';
 import { usePoll } from '../poll';
+import { InfoTip } from '../ui/InfoTip';
+import { EmptyState, ErrorState, PageHeader, Skeleton } from '../ui/layout';
 
-const URGENCY_LABEL: Record<Urgency, string> = {
-  NONE: '—',
-  MONITOR: 'Monitor',
-  PRIORITY: 'Priority',
-  IMMEDIATE: 'Immediate',
-};
-
-/** B2B listings read from the marketplace table. Refreshes every few seconds, so a spike on the control tower reprices it here. */
+/** Deal cards read from the marketplace table. A spike on the Control Tower reprices them here. */
 export function MarketplacePage() {
-  const { data, error, loading, syncedAt } = usePoll(fetchMarketplace, 4000);
+  const { data, error, loading, reload } = usePoll(fetchMarketplace, 4000);
+  useChangeStream(() => reload());
+  const [claiming, setClaiming] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
+
+  async function claim(l: MarketplaceListing) {
+    setClaiming(l.listingId);
+    setClaimError(null);
+    try {
+      await claimListing(l.listingId);
+    } catch (err) {
+      setClaimError(err instanceof Error ? err.message : 'The claim could not be recorded. Nothing changed.');
+    } finally {
+      reload();
+      setClaiming(null);
+    }
+  }
+
+  // Deals first: biggest markdown, then least shelf life left.
+  const deals = data ? [...data].sort((a, b) => b.discountPct - a.discountPct || a.remainingHours - b.remainingHours) : [];
 
   return (
-    <section className="page" aria-labelledby="mp-title">
-      <header className="page-head">
-        <div>
-          <p className="eyebrow">B2B produce marketplace</p>
-          <h1 id="mp-title">Listings</h1>
-        </div>
-        <span className="panel-meta">
-          {syncedAt ? `Synced ${clock(syncedAt.toISOString())} · refreshes every 4 s` : 'Loading listings…'}
-        </span>
-      </header>
+    <section className="page" aria-labelledby="page-title">
+      <PageHeader
+        title="Marketplace"
+        subtitle={data ? `${data.filter((l) => l.discountPct > 0).length} rescue deals · ${data.length} listings` : undefined}
+        actions={<InfoTip about="automatic markdown" text={policyExplanation()} side="bottom-end" />}
+      />
 
-      {error && (
+      {error && !data && <ErrorState title="We can't load the marketplace" message={`${error} Check that the server is running, then try again.`} onRetry={reload} />}
+      {error && data && (
         <p className="notice is-error" role="alert">
-          {data ? `Showing the last synced listings. ${error}` : error}
+          Showing the last synced listings. {error}
         </p>
       )}
-
-      {loading && !data && <p className="quiet" role="status">Loading listings from the marketplace…</p>}
-
-      {data && data.length === 0 && (
-        <div className="empty-state">
-          <p className="empty-title">No listings yet</p>
-          <p>A listing appears when a shipment is created. Listings are not created in the browser.</p>
+      {claimError && (
+        <p className="notice is-error" role="alert">
+          {claimError}
+        </p>
+      )}
+      {loading && !data && (
+        <div className="deal-grid" role="status" aria-label="Loading listings">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} height={220} />
+          ))}
         </div>
       )}
+      {data && data.length === 0 && <EmptyState icon="market" title="No listings yet" hint="A listing appears when a shipment is created." />}
 
       {data && data.length > 0 && (
-        <div className="table-wrap">
-          <table className="market-table">
-            <thead>
-              <tr>
-                <th scope="col">Produce</th>
-                <th scope="col">Origin → destination</th>
-                <th scope="col">Remaining shelf life</th>
-                <th scope="col">Risk</th>
-                <th scope="col" className="num">Original</th>
-                <th scope="col" className="num">Current</th>
-                <th scope="col" className="num">Markdown</th>
-                <th scope="col" className="num">Available</th>
-                <th scope="col">Urgency</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((l) => (
-                <ListingRow key={l.listingId} listing={l} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="deal-grid">
+          {deals.map((l) => (
+            <li key={l.listingId}>
+              <DealCard listing={l} busy={claiming === l.listingId} onClaim={() => claim(l)} />
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   );
 }
 
-function ListingRow({ listing: l }: { listing: MarketplaceListing }) {
+export function DealCard({ listing: l, busy, onClaim }: { listing: MarketplaceListing; busy: boolean; onClaim: () => void }) {
   const discounted = l.discountPct > 0;
-  const risk = RISK_COPY[l.riskLevel];
+  const rescued = l.availableKg <= 0;
   return (
-    <tr className={discounted ? 'is-liquidation' : ''}>
-      <td data-label="Produce">
-        <span className="cell-main">{l.produce}</span>
-        <span className="cell-sub">{l.code}</span>
-      </td>
-      <td data-label="Origin → destination">
-        <span className="cell-main">{l.origin}</span>
-        <span className="cell-sub">→ {l.destination}</span>
-      </td>
-      <td data-label="Remaining shelf life">
-        <span className="cell-num">{hours(l.remainingHours)} h</span>
-        <span className="cell-sub">{daysLabel(l.remainingHours)}</span>
-      </td>
-      <td data-label="Risk">
-        <span className={`risk-tag risk-${l.riskLevel}`}>
-          <span className="risk-tag-dot" aria-hidden="true" />
-          {risk.label}
-          <span className="risk-tag-code">{risk.short}</span>
-        </span>
-      </td>
-      <td data-label="Original" className="num">
-        {rupees(l.originalPricePerKg)}
-        <span className="cell-sub">/kg</span>
-      </td>
-      <td data-label="Current" className="num">
-        <span key={l.currentPricePerKg} className="price-flash">
-          <strong>{rupees(l.currentPricePerKg)}</strong>
-        </span>
-        <span className="cell-sub">/kg</span>
-      </td>
-      <td data-label="Markdown" className="num">
-        {discounted ? <span className="markdown-tag">−{l.discountPct}%</span> : <span className="cell-sub">none</span>}
-      </td>
-      <td data-label="Available" className="num">
-        {l.availableKg.toLocaleString()} kg
-        <span className="cell-sub">{discounted ? 'liquidation listing' : 'normal listing'}</span>
-      </td>
-      <td data-label="Urgency">
-        <span className={`urgency urgency-${l.urgency.toLowerCase()}`}>{URGENCY_LABEL[l.urgency]}</span>
-      </td>
-    </tr>
+    <article className={`deal-card risk-${l.riskLevel} ${discounted ? 'is-deal' : ''} ${rescued ? 'is-rescued' : ''}`}>
+      <header className="deal-head">
+        <MiniGauge remaining={l.remainingHours} baseline={l.baselineShelfLifeHours} level={l.riskLevel} />
+        <div className="deal-title">
+          <h2>{l.produce}</h2>
+          <p className="fleet-code">{l.code}</p>
+          <RiskBadge level={l.riskLevel} />
+        </div>
+      </header>
+
+      <p className="deal-reason">{dealReason(l.discountPct, l.riskLevel)}</p>
+
+      <p className="deal-price">
+        {discounted && <s aria-label={`was ${rupees(l.originalPricePerKg)} per kg`}>{rupees(l.originalPricePerKg)}</s>}
+        <strong key={l.currentPricePerKg} className="price-flash">
+          {rupees(l.currentPricePerKg)}
+        </strong>
+        <span>/kg</span>
+      </p>
+
+      <dl className="deal-facts">
+        <div>
+          <dt>Left</dt>
+          <dd>{l.availableKg.toLocaleString()} kg</dd>
+        </div>
+        <div>
+          <dt>Sell within</dt>
+          <dd>{hours(l.remainingHours)} h</dd>
+        </div>
+      </dl>
+
+      {rescued ? (
+        <p className="deal-rescued" role="status">
+          <span aria-hidden="true">✓</span> RESCUED · {l.claimedKg.toLocaleString()} kg
+        </p>
+      ) : (
+        <button type="button" className="btn btn-primary deal-cta" disabled={busy} aria-busy={busy} onClick={onClaim}>
+          {busy ? 'Claiming…' : discounted ? 'Rescue deal' : 'Claim'}
+        </button>
+      )}
+      {!rescued && l.claimedKg > 0 && <p className="deal-partial">{l.claimedKg.toLocaleString()} kg already rescued</p>}
+    </article>
   );
 }

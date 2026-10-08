@@ -6,12 +6,14 @@ import type { Db } from './db.js';
 import { inTransaction } from './db.js';
 import { checkDegradationEngine, checkLiquidationEngine, type HealthReport } from './health.js';
 import { hashRequest, isDatabaseUnavailable, isValidIdempotencyKey } from './guards.js';
+import { openStream, publishChange } from './events.js';
 import { getShipmentDetail, getShipmentRow, ingestTelemetry, listShipments, listTelemetry } from './pipeline.js';
+import { previewTelemetry } from './preview.js';
 import { resetDemoShipment } from './seed.js';
 import { SCENARIOS, type ScenarioName } from './simulator.js';
 import { validateTelemetry } from './validation.js';
 import { fixedWindowLimiter } from './ratelimit.js';
-import { acknowledgeAlert, listAlerts, listMarketplace, telemetryHistory } from './views.js';
+import { acknowledgeAlert, claimListing, listAlerts, listMarketplace, telemetryHistory } from './views.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -112,7 +114,47 @@ export function createApp(db: Db, options: AppOptions) {
     const { value } = validation;
     idempotent(req, res, db, 'POST /api/telemetry', { shipmentId: value.shipmentId, ...reqBody(req) }, () => {
       const event = ingestTelemetry(db, value);
+      publishChange({ shipmentId: value.shipmentId, kind: 'telemetry' });
       return { event, shipment: getShipmentDetail(db, value.shipmentId) };
+    });
+  });
+
+  /** Live changes: a tiny "something changed" message after each successful write. Clients refetch from the normal API. */
+  app.get('/api/stream', (req, res) => openStream(req, res));
+
+  /**
+   * Simulator preview (demo): what a reading WOULD do, from the real model and liquidation
+   * engine. Read-only: nothing is written, so it can be repeated freely.
+   */
+  app.post('/api/shipments/:id/preview', (req, res) => {
+    requireDemo(options);
+    const id = parseId(req.params.id as string);
+    getShipmentRow(db, id);
+    const validation = validateTelemetry({ ...reqBody(req), shipmentId: id });
+    if (!validation.ok) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Reading is invalid.', validation.errors);
+    }
+    res.json(previewTelemetry(db, validation.value));
+  });
+
+  /**
+   * Simulator commit (demo): the browser may send a reading, but never holds the ingest
+   * key, so this demo-only route applies the same validation and the very same
+   * `ingestTelemetry` pipeline as POST /api/telemetry.
+   */
+  app.post('/api/shipments/:id/simulate', (req, res) => {
+    requireDemo(options);
+    const id = parseId(req.params.id as string);
+    getShipmentRow(db, id);
+    const validation = validateTelemetry({ ...reqBody(req), shipmentId: id });
+    if (!validation.ok) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'Reading is invalid.', validation.errors);
+    }
+    const { value } = validation;
+    idempotent(req, res, db, 'POST simulate', { shipmentId: id, ...reqBody(req) }, () => {
+      const event = ingestTelemetry(db, value);
+      publishChange({ shipmentId: id, kind: 'telemetry' });
+      return { event, shipment: getShipmentDetail(db, id) };
     });
   });
 
@@ -137,6 +179,22 @@ export function createApp(db: Db, options: AppOptions) {
     res.json({ alert: acknowledgeAlert(db, raw) });
   });
 
+  /**
+   * A retailer claims stock from a listing (the "rescue deal"). Atomic and idempotent with an
+   * Idempotency-Key. No login yet: full role-based auth is deferred; abuse is bounded by the
+   * write rate limit, strict validation, and the stock check inside the transaction.
+   */
+  app.post('/api/listings/:id/claim', (req, res) => {
+    const raw = req.params.id as string;
+    if (!UUID.test(raw)) throw new ApiError(400, 'INVALID_ID', 'Listing id is not valid.');
+    const body = reqBody(req);
+    const q = body.quantityKg;
+    if (q !== undefined && (typeof q !== 'number' || !Number.isFinite(q) || q <= 0 || q > 1_000_000)) {
+      throw new ApiError(400, 'VALIDATION_ERROR', 'quantityKg must be a positive number.');
+    }
+    idempotent(req, res, db, `POST claim ${raw}`, body, () => ({ claim: claimListing(db, raw, q as number | undefined) }));
+  });
+
   /** Demo only: restores the demo shipment to its initial state under the same id. */
   app.post('/api/shipments/:id/reset', (req, res) => {
     requireDemo(options);
@@ -144,7 +202,9 @@ export function createApp(db: Db, options: AppOptions) {
     if (getShipmentRow(db, id).code !== DEMO_SHIPMENT.code) {
       throw new ApiError(403, 'RESET_NOT_ALLOWED', 'Only the demo shipment can be reset.');
     }
-    res.json(getShipmentDetail(db, resetDemoShipment(db)));
+    const resetId = resetDemoShipment(db);
+    publishChange({ shipmentId: resetId, kind: 'reset' });
+    res.json(getShipmentDetail(db, resetId));
   });
 
   // Scoped to /api so page requests fall through to the static or Vite handler.
@@ -195,6 +255,7 @@ function runScenario(req: Request, res: Response, db: Db, scenario: ScenarioName
       throw new EngineError('scenario definition failed validation');
     }
     const event = ingestTelemetry(db, validation.value);
+    publishChange({ shipmentId: id, kind: 'telemetry' });
     return { scenario, readings: reading, event, shipment: getShipmentDetail(db, id) };
   });
 }

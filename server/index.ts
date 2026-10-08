@@ -5,6 +5,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { createApp } from './app.js';
 import { openDatabase, type Db } from './db.js';
 import { EnvError, readEnv } from './env.js';
+import { seedFleet } from './fleet.js';
 import { seedDemoShipment } from './seed.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,6 +47,8 @@ function main() {
     process.exit(1);
   }
   seedDemoShipment(db);
+  // The demo fleet is pretend data, so it exists only when demo mode is on.
+  if (env.demoMode) seedFleet(db);
 
   const app = createApp(db, {
     allowedOrigins: env.allowedOrigins,

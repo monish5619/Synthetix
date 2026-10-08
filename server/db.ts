@@ -7,9 +7,10 @@ import { DatabaseSync } from 'node:sqlite';
  * version is rebuilt from scratch: this is pre-release demo data, so there is
  * no migration path to preserve.
  */
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 const TABLES = [
+  'listing_claims',
   'idempotency_keys',
   'audit_logs',
   'spoilage_alerts',
@@ -108,6 +109,19 @@ CREATE TABLE spoilage_alerts (
   acknowledged_at TEXT
 );
 
+-- A retailer's claim on part of a listing. Remaining stock = shipment quantity - SUM(claims).
+-- The price is locked at claim time, so a later repricing never rewrites a past rescue.
+CREATE TABLE listing_claims (
+  id TEXT PRIMARY KEY,
+  listing_id TEXT NOT NULL REFERENCES marketplace_listings(id) ON DELETE CASCADE,
+  shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+  quantity_kg REAL NOT NULL CHECK (quantity_kg > 0),
+  price_per_kg REAL NOT NULL CHECK (price_per_kg > 0),
+  discount_pct INTEGER NOT NULL,
+  claimed_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE audit_logs (
   id TEXT PRIMARY KEY,
   shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
@@ -131,6 +145,7 @@ CREATE INDEX idx_telemetry_shipment ON telemetry_events(shipment_id, recorded_at
 CREATE INDEX idx_snapshots_shipment ON shelf_life_snapshots(shipment_id, created_at);
 CREATE INDEX idx_recommendations_shipment ON liquidation_recommendations(shipment_id, created_at);
 CREATE INDEX idx_alerts_shipment ON spoilage_alerts(shipment_id, created_at);
+CREATE INDEX idx_claims_listing ON listing_claims(listing_id);
 CREATE INDEX idx_audit_shipment ON audit_logs(shipment_id, created_at);
 `;
 
