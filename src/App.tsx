@@ -16,6 +16,10 @@ import { Explain } from './components/Explain';
 import { Hero, type SequenceStep } from './components/Hero';
 import { Liquidation } from './components/Liquidation';
 import { Masthead } from './components/Masthead';
+import { AlertsPage } from './pages/AlertsPage';
+import { MarketplacePage } from './pages/MarketplacePage';
+import { TelemetryPage } from './pages/TelemetryPage';
+import { useRoute } from './route';
 import { Timeline } from './components/Timeline';
 import { clock } from './format';
 
@@ -151,13 +155,19 @@ export function App() {
     }
   }
 
+  const route = useRoute();
+
   return (
     <div className="app">
-      <Masthead health={health} healthError={healthError} />
+      <Masthead health={health} healthError={healthError} route={route} />
 
-      {loading && !state && <Skeleton />}
+      {route === 'marketplace' && <MarketplacePage />}
+      {route === 'telemetry' && <TelemetryPage />}
+      {route === 'alerts' && <AlertsPage />}
 
-      {loadError && !state && (
+      {route === 'control' && loading && !state && <Skeleton />}
+
+      {route === 'control' && loadError && !state && (
         <section className="notice-panel" role="alert">
           <p className="eyebrow">Shipment unavailable</p>
           <p>{loadError}</p>
@@ -167,7 +177,7 @@ export function App() {
         </section>
       )}
 
-      {state && (
+      {route === 'control' && state && (
         <>
           <section className="shipment-strip" aria-label="Active shipment">
             <div className="strip-id">

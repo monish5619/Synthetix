@@ -287,3 +287,69 @@ describe("primary action: POST /api/shipments/:id/simulate-spike", () => {
     expect(body.readings).toEqual({ temperature: 4, humidity: 60, transitDuration: 2 });
   });
 });
+
+describe("secondary read models", () => {
+  it("marketplace reads the listing: normal before the event, liquidation after it", async () => {
+    await send("POST", `/api/shipments/${shipmentId}/reset`);
+    let body = await (await send("GET", "/api/marketplace")).json();
+    expect(body.listings).toHaveLength(1);
+    expect(body.listings[0]).toMatchObject({
+      code: "AS-1042",
+      origin: "Hosur Farm Hub",
+      destination: "Coimbatore",
+      originalPricePerKg: 100,
+      currentPricePerKg: 100,
+      discountPct: 0,
+      listingStatus: "NORMAL",
+      riskLevel: "NORMAL",
+      urgency: "NONE",
+      availableKg: 1200,
+    });
+    expect(body.listings[0].remainingHours).toBeCloseTo(120, 6);
+
+    await send("POST", `/api/shipments/${shipmentId}/simulate-spike`);
+    body = await (await send("GET", "/api/marketplace")).json();
+    expect(body.listings[0]).toMatchObject({
+      currentPricePerKg: 65,
+      discountPct: 35,
+      listingStatus: "LIQUIDATION",
+      riskLevel: "CRITICAL",
+      urgency: "IMMEDIATE",
+    });
+    expect(body.listings[0].remainingHours).toBeLessThan(18);
+  });
+
+  it("alerts come from the database, with the recommended action and markdown", async () => {
+    await send("POST", `/api/shipments/${shipmentId}/reset`);
+    expect((await (await send("GET", "/api/alerts")).json()).alerts).toHaveLength(0);
+
+    await send("POST", `/api/shipments/${shipmentId}/simulate-spike`);
+    const { alerts } = await (await send("GET", "/api/alerts")).json();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      code: "AS-1042",
+      severity: "CRITICAL",
+      markdownPct: 35,
+      recommendedPricePerKg: 65,
+      recommendedAction: "Liquidate to local retailers at 35% markdown",
+    });
+    expect(alerts[0].remainingHours).toBeGreaterThan(17);
+    expect(alerts[0].remainingHours).toBeLessThan(18);
+  });
+
+  it("telemetry history classifies each reading and links it to its snapshot", async () => {
+    await send("POST", `/api/shipments/${shipmentId}/reset`);
+    await send("POST", `/api/shipments/${shipmentId}/simulate-normal`);
+    await send("POST", `/api/shipments/${shipmentId}/simulate-spike`);
+    const body = await (await send("GET", `/api/shipments/${shipmentId}/telemetry-history`)).json();
+    expect(body.entries.map((e: { kind: string }) => e.kind)).toEqual(["NORMAL_TELEMETRY", "THERMAL_EXCURSION"]);
+    const excursion = body.entries[1];
+    expect(excursion).toMatchObject({ temperature: 30, humidity: 85, exposureHours: 6.3, riskLevel: "CRITICAL" });
+    expect(excursion.remainingHours).toBeLessThan(18);
+    expect(excursion.explanation).toContain("30.0 °C");
+  });
+
+  it("telemetry history returns 404 for an unknown shipment", async () => {
+    await expectError(await send("GET", `/api/shipments/${MISSING_ID}/telemetry-history`), 404, "NOT_FOUND");
+  });
+});

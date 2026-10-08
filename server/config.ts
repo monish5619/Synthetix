@@ -40,6 +40,9 @@ export const VALID_RANGES = {
   exposureHours: { min: 0, max: 24 },
 } as const;
 
+/** A reading this far above the ideal temperature is classed as a thermal excursion in history views. */
+export const EXCURSION_ABOVE_IDEAL_C = 4;
+
 export type RiskLevel = 'NORMAL' | 'WATCH' | 'HIGH' | 'CRITICAL';
 
 /**

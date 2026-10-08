@@ -63,6 +63,9 @@ Set `PORT` or `DATABASE_PATH` to override the defaults. The database defaults to
 | GET | `/api/shipments` | Persisted shipments with current summary |
 | GET | `/api/shipments/:id` | Current state: shipment, assessment, listing, recommendations, alerts, audit |
 | GET | `/api/shipments/:id/telemetry` | Every persisted telemetry event for the shipment, oldest first |
+| GET | `/api/marketplace` | Every listing: price, markdown, risk, remaining shelf life, urgency. Read from the marketplace table |
+| GET | `/api/alerts` | Every spoilage alert, with the recommended action and markdown from the recommendation it belongs to |
+| GET | `/api/shipments/:id/telemetry-history` | Each telemetry event joined to the snapshot it produced, classified as normal telemetry or thermal excursion |
 | POST | `/api/telemetry` | Ingest an external reading: `{ shipmentId, temperature, humidity, transitDuration }` |
 | POST | `/api/shipments/:id/simulate-spike` | Primary demo action. The server generates the thermal event, runs the full pipeline, and returns the complete state |
 | POST | `/api/shipments/:id/simulate-normal` | Generates a normal reading through the same pipeline |
@@ -88,6 +91,10 @@ Errors share one shape:
 | 500 | `INTERNAL_ERROR` | Anything unexpected. The message is generic. |
 
 Stack traces, SQL, database paths, and secrets never appear in responses. Only the error class is logged server-side.
+
+## Screens
+
+Hash routes, one page each: `#/` Control Tower, `#/marketplace` listings, `#/telemetry` history and the operational event timeline, `#/alerts` spoilage alerts. Secondary screens poll every 4 seconds, so a spike on the Control Tower reaches them without a reload.
 
 ## Security notes
 

@@ -7,6 +7,7 @@ import { resetDemoShipment } from './seed.js';
 import { SCENARIOS, type ScenarioName } from './simulator.js';
 import { checkDegradationEngine, checkLiquidationEngine, type HealthReport } from './health.js';
 import { validateTelemetry } from './validation.js';
+import { listAlerts, listMarketplace, telemetryHistory } from './views.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,9 +41,27 @@ export function createApp(db: Db) {
     res.json({ shipments: listShipments(db) });
   });
 
+  /** Marketplace: every listing with its shipment, risk, and latest recommendation. */
+  app.get('/api/marketplace', (_req, res) => {
+    res.json({ listings: listMarketplace(db) });
+  });
+
+  /** Alerts: every spoilage alert from the database, newest first. */
+  app.get('/api/alerts', (_req, res) => {
+    res.json({ alerts: listAlerts(db) });
+  });
+
   app.get('/api/shipments/:id', (req, res) => {
     const id = parseId(req.params.id);
     res.json(getShipmentDetail(db, id));
+  });
+
+  /** Telemetry events joined to the snapshot each one produced. */
+  app.get('/api/shipments/:id/telemetry-history', (req, res) => {
+    const id = parseId(req.params.id);
+    getShipmentRow(db, id);
+    const entries = telemetryHistory(db, id);
+    res.json({ shipmentId: id, count: entries.length, entries });
   });
 
   app.get('/api/shipments/:id/telemetry', (req, res) => {
