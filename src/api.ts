@@ -56,3 +56,15 @@ export async function simulateNormal(shipmentId: string): Promise<ScenarioResult
 export async function resetShipment(shipmentId: string): Promise<ShipmentDetail> {
   return readJson<ShipmentDetail>(await fetch(`/api/shipments/${shipmentId}/reset`, { method: 'POST' }));
 }
+
+export interface HealthReport {
+  telemetryApi: 'ONLINE';
+  database: 'CONNECTED';
+  degradationEngine: 'READY' | 'FAILED';
+  liquidationEngine: 'READY' | 'FAILED';
+  checkedAt: string;
+}
+
+export async function fetchHealth(): Promise<HealthReport> {
+  return readJson<HealthReport>(await fetch('/api/health'));
+}

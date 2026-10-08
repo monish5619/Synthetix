@@ -59,7 +59,7 @@ Set `PORT` or `DATABASE_PATH` to override the defaults. The database defaults to
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET | `/api/health` | Liveness plus a live database check |
+| GET | `/api/health` | Live check of the telemetry API, database, and both engines, each verified by a known-answer test |
 | GET | `/api/shipments` | Persisted shipments with current summary |
 | GET | `/api/shipments/:id` | Current state: shipment, assessment, listing, recommendations, alerts, audit |
 | GET | `/api/shipments/:id/telemetry` | Every persisted telemetry event for the shipment, oldest first |
@@ -100,6 +100,6 @@ Stack traces, SQL, database paths, and secrets never appear in responses. Only t
 ```
 server/   Express app, degradation model, ingest pipeline, SQLite schema and seed
 shared/   Telemetry presets used by both the UI and tests
-src/      React control tower (App.tsx, styles.css, api client)
+src/      React control tower: App.tsx (state and actions), components/ (Masthead, Hero, ActionBar, Timeline, Liquidation, Explain, Activity), hooks.ts, styles.css
 tests/    Vitest suites for the model and the API
 ```

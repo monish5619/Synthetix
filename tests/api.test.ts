@@ -52,7 +52,8 @@ describe('server and database', () => {
   it('reports healthy with a live database', async () => {
     const res = await send('GET', '/api/health');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok', database: 'ok' });
+    const body = await res.json();
+    expect(body).toMatchObject({ telemetryApi: 'ONLINE', database: 'CONNECTED', degradationEngine: 'READY', liquidationEngine: 'READY' });
   });
 
   it('seeds the demo shipment at its initial state', async () => {

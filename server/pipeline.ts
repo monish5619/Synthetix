@@ -217,6 +217,15 @@ export function getShipmentDetail(db: Db, shipmentId: string) {
       )
       .all(shipmentId) as unknown as AlertView[],
     telemetry: listTelemetry(db, shipmentId, 200),
+    snapshots: db
+      .prepare(
+        `SELECT remaining_hours AS remainingHours, transit_remaining_hours AS transitRemainingHours,
+           temperature_c AS temperatureC, humidity_pct AS humidityPct, exposure_hours AS exposureHours,
+           equivalent_age_increment AS equivalentAgeIncrement,
+           risk_level AS riskLevel, created_at AS createdAt
+         FROM shelf_life_snapshots WHERE shipment_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 200`,
+      )
+      .all(shipmentId) as unknown as SnapshotView[],
     audit: db
       .prepare(
         `SELECT id, event_type AS eventType, summary, detail_json AS detailJson, created_at AS createdAt
@@ -476,4 +485,15 @@ export function audit(db: Db, shipmentId: string, eventType: string, summary: st
   db.prepare(
     'INSERT INTO audit_logs (id, shipment_id, event_type, summary, detail_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(randomUUID(), shipmentId, eventType, summary, JSON.stringify(detail), ts);
+}
+
+export interface SnapshotView {
+  remainingHours: number;
+  transitRemainingHours: number;
+  temperatureC: number;
+  humidityPct: number;
+  exposureHours: number;
+  equivalentAgeIncrement: number;
+  riskLevel: RiskLevel;
+  createdAt: string;
 }

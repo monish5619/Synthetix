@@ -70,7 +70,7 @@ export function reasonFor(output: ModelOutput): string {
         ? 'elevated humidity'
         : 'cumulative exposure';
 
-  return `Predicted shelf life has crossed the ${THRESHOLD_LABEL[output.riskLevel]} threshold due to ${driver}.`;
+  return `Predicted shelf life has fallen below the ${THRESHOLD_LABEL[output.riskLevel]} threshold due to ${driver}.`;
 }
 
 export function discountedPrice(basePricePerKg: number, markdownPct: number): number {

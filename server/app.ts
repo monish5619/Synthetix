@@ -5,6 +5,7 @@ import type { Db } from './db.js';
 import { getShipmentDetail, getShipmentRow, ingestTelemetry, listShipments, listTelemetry } from './pipeline.js';
 import { resetDemoShipment } from './seed.js';
 import { SCENARIOS, type ScenarioName } from './simulator.js';
+import { checkDegradationEngine, checkLiquidationEngine, type HealthReport } from './health.js';
 import { validateTelemetry } from './validation.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,13 +19,21 @@ export function createApp(db: Db) {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '10kb' }));
 
+  /** Reaching this handler means the telemetry API is up. The database and engines are checked live. */
   app.get('/api/health', (_req, res) => {
     try {
       db.prepare('SELECT 1').get();
     } catch {
       throw new ApiError(503, 'DATABASE_UNAVAILABLE', 'Database is not reachable.');
     }
-    res.json({ status: 'ok', database: 'ok' });
+    const report: HealthReport = {
+      telemetryApi: 'ONLINE',
+      database: 'CONNECTED',
+      degradationEngine: checkDegradationEngine(),
+      liquidationEngine: checkLiquidationEngine(),
+      checkedAt: new Date().toISOString(),
+    };
+    res.json(report);
   });
 
   app.get('/api/shipments', (_req, res) => {

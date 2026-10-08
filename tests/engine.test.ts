@@ -73,7 +73,7 @@ describe('engine scenarios through the persisted pipeline', () => {
       status: 'APPLIED',
     });
     expect(rec.reason).toBe(
-      'Predicted shelf life has crossed the critical liquidation threshold due to elevated thermal exposure and humidity.',
+      'Predicted shelf life has fallen below the critical liquidation threshold due to elevated thermal exposure and humidity.',
     );
     expect(rec.retailerAction).toContain('35% off');
     expect(rec.sellByHours).toBe(17);
