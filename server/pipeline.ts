@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { inTransaction, type Db } from './db.js';
 import { EngineError, notFound } from './errors.js';
 import {
+  EXCURSION_ABOVE_IDEAL_C,
   LIQUIDATION_POLICY,
   MODEL_CONFIG,
   MODEL_VERSION,
@@ -196,6 +197,7 @@ export function getShipmentDetail(db: Db, shipmentId: string) {
       ...MODEL_CONFIG,
       riskBands: RISK_BANDS,
       liquidationPolicy: LIQUIDATION_POLICY,
+      excursionAboveIdealC: EXCURSION_ABOVE_IDEAL_C,
     },
     latestModelRun: snapshot ? toModelRun(snapshot) : null,
     listing: {

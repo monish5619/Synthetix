@@ -94,7 +94,7 @@ Stack traces, SQL, database paths, and secrets never appear in responses. Only t
 
 ## Screens
 
-Hash routes, one page each: `#/` Control Tower, `#/marketplace` listings, `#/telemetry` history and the operational event timeline, `#/alerts` spoilage alerts. Secondary screens poll every 4 seconds, so a spike on the Control Tower reaches them without a reload.
+Hash routes, one page each. The Control Tower opens with the product thesis, then a shipment story: produce healthy, thermal event, shelf life collapses, risk rises, business decision, marketplace reprices, retailer can act. Every stage lights only when a stored record shows it happened. The journey strip draws the route to scale, coloured by the temperature recorded across each stretch. Other pages: `#/marketplace` listings, `#/telemetry` history and the operational event timeline, `#/alerts` spoilage alerts. Secondary screens poll every 4 seconds, so a spike on the Control Tower reaches them without a reload.
 
 ## Configuration and security
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ShipmentDetail } from '../server/pipeline';
 import {
   fetchHealth,
@@ -11,20 +11,24 @@ import {
   type ScenarioResult,
 } from './api';
 import { ActionBar, type ActionKind, type RunStatus } from './components/ActionBar';
-import { Activity } from './components/Activity';
 import { Explain } from './components/Explain';
-import { Hero, type SequenceStep } from './components/Hero';
+import { Hero } from './components/Hero';
 import { Liquidation } from './components/Liquidation';
-import { Masthead } from './components/Masthead';
+import { Masthead, SystemFooter } from './components/Masthead';
+import { StoryRail } from './components/StoryRail';
+import { Timeline } from './components/Timeline';
+import { clock } from './format';
 import { AlertsPage } from './pages/AlertsPage';
 import { MarketplacePage } from './pages/MarketplacePage';
 import { TelemetryPage } from './pages/TelemetryPage';
 import { useRoute } from './route';
-import { Timeline } from './components/Timeline';
-import { clock } from './format';
 
-const SEQUENCE_STEP_MS = 380;
 const HEALTH_POLL_MS = 15000;
+/** Number of story stages. The reveal lights them in order, one every REVEAL_MS. */
+const STAGE_COUNT = 7;
+const REVEAL_MS = 420;
+/** The shelf-life number holds its old value until the story reaches the risk stages. */
+const NUMBER_HOLD_MS = 1000;
 
 /** Backend-confirmed records for one run, read from the response. Never inferred. */
 const CONFIRMATIONS: Array<{ eventType: string; label: string }> = [
@@ -44,11 +48,6 @@ function confirmationsFor(result: ScenarioResult): string[] {
   return items;
 }
 
-interface Sequence {
-  step: SequenceStep;
-  result: ScenarioResult;
-}
-
 export function App() {
   const [state, setState] = useState<ShipmentDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,10 +56,11 @@ export function App() {
   const [healthError, setHealthError] = useState(false);
   const [busy, setBusy] = useState<ActionKind | null>(null);
   const [run, setRun] = useState<RunStatus | null>(null);
-  const [sequence, setSequence] = useState<Sequence | null>(null);
-  const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<string | null>(null);
-  const seenAudit = useRef<Set<string> | null>(null);
+  /** Stages revealed so far. Infinity means everything is shown, which is the steady state. */
+  const [revealed, setRevealed] = useState<number>(Infinity);
+  const [playing, setPlaying] = useState(false);
+  const route = useRoute();
 
   /** Loads the first persisted shipment. Nothing about it is hard-coded in the UI. */
   const load = useCallback(async () => {
@@ -86,7 +86,11 @@ export function App() {
     let alive = true;
     const check = () =>
       fetchHealth()
-        .then((h) => alive && (setHealth(h), setHealthError(false)))
+        .then((h) => {
+          if (!alive) return;
+          setHealth(h);
+          setHealthError(false);
+        })
         .catch(() => alive && setHealthError(true));
     void check();
     const timer = window.setInterval(check, HEALTH_POLL_MS);
@@ -96,26 +100,16 @@ export function App() {
     };
   }, []);
 
-  // Highlight audit entries and alerts that arrived with the latest response.
+  // Plays the consequence chain one stage at a time, after the backend has confirmed the event.
   useEffect(() => {
-    if (!state) return;
-    const ids = new Set([...state.audit.map((a) => a.id), ...state.alerts.map((a) => a.id)]);
-    if (seenAudit.current) {
-      const added = [...ids].filter((id) => !seenAudit.current!.has(id));
-      if (added.length > 0) setFresh(new Set(added));
+    if (!playing) return;
+    if (typeof revealed === 'number' && revealed >= STAGE_COUNT) {
+      setPlaying(false);
+      return;
     }
-    seenAudit.current = ids;
-  }, [state]);
-
-  // Advances the spike reveal one backend-confirmed fact at a time.
-  useEffect(() => {
-    if (!sequence || sequence.step >= 4) return;
-    const timer = window.setTimeout(
-      () => setSequence((s) => (s && s.step < 4 ? { ...s, step: (s.step + 1) as SequenceStep } : s)),
-      SEQUENCE_STEP_MS,
-    );
+    const timer = window.setTimeout(() => setRevealed((r) => (r === Infinity ? STAGE_COUNT : r + 1)), REVEAL_MS);
     return () => window.clearTimeout(timer);
-  }, [sequence]);
+  }, [playing, revealed]);
 
   /**
    * Primary action. The displayed state changes only after the backend confirms.
@@ -125,13 +119,18 @@ export function App() {
     if (!state || busy) return;
     setBusy(kind === 'spike' ? 'spike' : 'normal');
     setActionError(null);
-    setSequence(null);
     setRun({ kind, phase: 'pending', confirmations: [] });
     try {
       const result = await (kind === 'spike' ? simulateSpike : simulateNormal)(state.shipment.id);
       setState(result.shipment);
       setRun({ kind, phase: 'confirmed', confirmations: confirmationsFor(result) });
-      if (kind === 'spike') setSequence({ step: 0, result });
+      if (kind === 'spike') {
+        setRevealed(1);
+        setPlaying(true);
+      } else {
+        setRevealed(Infinity);
+        setPlaying(false);
+      }
       void fetchHealth().then(setHealth).catch(() => setHealthError(true));
     } catch (err) {
       setRun({ kind, phase: 'failed', confirmations: [], message: messageOf(err) });
@@ -144,7 +143,8 @@ export function App() {
     if (!state || busy) return;
     setBusy('reset');
     setRun(null);
-    setSequence(null);
+    setRevealed(Infinity);
+    setPlaying(false);
     setActionError(null);
     try {
       setState(await resetShipment(state.shipment.id));
@@ -155,11 +155,9 @@ export function App() {
     }
   }
 
-  const route = useRoute();
-
   return (
     <div className="app">
-      <Masthead health={health} healthError={healthError} route={route} />
+      <Masthead route={route} />
 
       {route === 'marketplace' && <MarketplacePage />}
       {route === 'telemetry' && <TelemetryPage />}
@@ -179,34 +177,25 @@ export function App() {
 
       {route === 'control' && state && (
         <>
-          <section className="shipment-strip" aria-label="Active shipment">
-            <div className="strip-id">
-              <span className="eyebrow">Active shipment</span>
-              <span className="strip-code">{state.shipment.code}</span>
-            </div>
-            <div className="strip-produce">
-              <span className="strip-name">{state.shipment.produce}</span>
-              <span className="strip-route">
-                {state.shipment.origin} → {state.shipment.destination}
+          <header className="thesis">
+            <p className="eyebrow">Cold-chain monitoring · predictive shelf life · automated liquidation</p>
+            <p className="thesis-line">
+              Produce loses its value in transit before anyone can see it. AgroSense reads the cold chain, predicts the
+              shelf life left, and reprices the produce before it spoils.
+            </p>
+            <p className="shipment-line">
+              <span className="code">{state.shipment.code}</span> {state.shipment.produce}
+              <span className="muted">
+                {' '}
+                · {state.shipment.origin} → {state.shipment.destination} · {state.shipment.quantityKg.toLocaleString()} kg
+                · updated {clock(state.shipment.updatedAt)}
               </span>
-            </div>
-            <dl className="strip-facts">
-              <div>
-                <dt>Quantity</dt>
-                <dd>{state.shipment.quantityKg.toLocaleString()} kg</dd>
-              </div>
-              <div>
-                <dt>Status</dt>
-                <dd className="status-pill">{state.shipment.status.replace('_', ' ')}</dd>
-              </div>
-              <div>
-                <dt>Updated</dt>
-                <dd>{clock(state.shipment.updatedAt)}</dd>
-              </div>
-            </dl>
-          </section>
+            </p>
+          </header>
 
-          <Hero state={state} sequence={sequence} />
+          <Hero state={state} holdMs={playing ? NUMBER_HOLD_MS : 0} />
+
+          <StoryRail state={state} revealed={revealed} />
 
           <ActionBar
             busy={busy}
@@ -219,13 +208,14 @@ export function App() {
           />
 
           <div className="board">
-            <Liquidation state={state} />
             <Timeline state={state} />
+            <Liquidation state={state} />
             <Explain state={state} />
-            <Activity state={state} fresh={fresh} />
           </div>
         </>
       )}
+
+      <SystemFooter health={health} healthError={healthError} />
     </div>
   );
 }

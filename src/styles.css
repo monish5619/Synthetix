@@ -2133,3 +2133,431 @@ button {
     padding: 20px 18px;
   }
 }
+
+/* ==========================================================================
+   Control tower composition: thesis, story, journey, quiet footer
+   ========================================================================== */
+
+/* The first thing a judge reads: what the product is and why it matters. */
+.thesis {
+  margin-top: 28px;
+  max-width: 900px;
+}
+
+.thesis-line {
+  margin: 12px 0 0;
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 72;
+  font-weight: 400;
+  font-size: clamp(22px, 2.4vw, 30px);
+  line-height: 1.3;
+  color: var(--paper);
+}
+
+.shipment-line {
+  margin: 14px 0 0;
+  font-size: 14px;
+  color: var(--paper-2);
+}
+
+.shipment-line .code {
+  font-family: var(--mono);
+  color: var(--paper);
+  margin-right: 6px;
+}
+
+/* hero, rearranged: number and conditions share the top row, the journey runs beneath */
+
+.hero {
+  display: block;
+  padding: 34px 40px 26px;
+}
+
+.hero-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 30px 52px;
+  align-items: start;
+}
+
+.hero .conditions {
+  padding-top: 6px;
+}
+
+/* journey: origin to destination, to scale, coloured by temperature */
+
+.journey {
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.journey svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.journey-label,
+.journey-tag,
+.journey-foot {
+  font-family: var(--mono);
+  font-size: 12px;
+  fill: var(--muted);
+}
+
+.journey-label {
+  fill: var(--paper-2);
+}
+
+.journey-foot {
+  font-size: 10.5px;
+  fill: var(--faint);
+}
+
+.journey-base {
+  stroke: var(--line-strong);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.stretch {
+  stroke-width: 6;
+  stroke-linecap: butt;
+}
+
+.stretch-cold {
+  stroke: var(--cold);
+  opacity: 0.55;
+}
+
+.stretch-hot {
+  stroke: var(--ember);
+  opacity: 0.9;
+}
+
+.journey-now {
+  fill: var(--paper);
+  stroke: var(--surface);
+  stroke-width: 3;
+}
+
+.journey-end {
+  stroke: var(--ember);
+  stroke-width: 2;
+}
+
+.journey-tag.is-end {
+  fill: var(--ember);
+}
+
+.journey-arrival {
+  stroke: var(--paper-2);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+/* story rail: the consequence chain, lit by the backend's records */
+
+.story {
+  margin-top: 18px;
+  padding: 22px 26px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--ground-2);
+}
+
+.story-rail {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  position: relative;
+}
+
+.story-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 0 0;
+  min-width: 0;
+  transition: opacity 0.4s var(--ease-out);
+}
+
+.story-index {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+.story-title {
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--paper-2);
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.story-value {
+  font-family: var(--serif);
+  font-variation-settings: 'opsz' 36;
+  font-size: clamp(16px, 1.6vw, 20px);
+  line-height: 1.2;
+  color: var(--paper);
+  margin-top: 6px;
+  word-break: break-word;
+}
+
+.story-detail {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.story-stage.is-dark {
+  opacity: 0.4;
+}
+
+.story-stage.is-dark .story-value {
+  color: var(--muted);
+}
+
+/* the connector rule runs behind the stages and fills as they light up */
+.story-stage::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: -12px;
+  top: 6px;
+  height: 2px;
+  background: var(--line-strong);
+}
+
+.story-stage.is-lit::before {
+  background: linear-gradient(90deg, var(--risk-tone, var(--cold)), var(--risk-tone, var(--cold)));
+}
+
+.story-stage:last-child::before {
+  display: none;
+}
+
+.story-stage::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: var(--ground-2);
+}
+
+.story-stage.is-lit::after {
+  border-color: var(--cold);
+  background: var(--cold);
+}
+
+/* the stage that turns the danger on is ember; the rest of the chain is cool */
+.story-stage.is-lit:nth-child(n + 4).story-stage::after {
+  border-color: var(--ember);
+  background: var(--ember);
+}
+
+.story-stage.is-lit:nth-child(n + 4)::before {
+  background: var(--ember);
+  opacity: 0.6;
+}
+
+.story-stage.is-lit[aria-current='step'] .story-value {
+  color: #fff6e6;
+}
+
+.story-stage.is-lit[aria-current='step']::after {
+  box-shadow: 0 0 0 4px rgba(224, 87, 60, 0.18);
+}
+
+.story-stage.is-lit {
+  animation: rise 0.45s var(--ease-out) both;
+}
+
+.story-stage > * {
+  margin-top: 0;
+}
+
+.story-stage > .story-index {
+  padding-top: 22px;
+}
+
+/* decision: keep the board, but let liquidation sit beside the timeline */
+
+.board {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.board .timeline {
+  grid-column: 1 / 9;
+  grid-row: 1;
+}
+
+.board .liquidation {
+  grid-column: 9 / 13;
+  grid-row: 1;
+}
+
+.board .explain {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* quiet footer: system status, not a dashboard panel */
+
+.system-footer {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.system-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.system-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.system-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.system-list .is-ok .system-dot {
+  background: var(--forest);
+}
+
+.system-list .is-bad .system-dot {
+  background: var(--ember);
+}
+
+.system-list .is-bad .system-status {
+  color: var(--ember);
+}
+
+.system-status {
+  color: var(--paper-2);
+}
+
+/* the masthead is now brand and navigation only */
+
+.masthead {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 1080px) {
+  .hero-top {
+    grid-template-columns: 1fr;
+  }
+
+  .hero .conditions {
+    border-left: none;
+    padding-left: 0;
+  }
+
+  .story-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 16px;
+  }
+
+  .story-stage::before,
+  .story-stage::after {
+    display: none;
+  }
+
+  .story-stage {
+    padding-left: 14px;
+    border-left: 2px solid var(--line-strong);
+  }
+
+  .story-stage.is-lit {
+    border-left-color: var(--cold);
+  }
+
+  .story-stage.is-lit:nth-child(n + 4) {
+    border-left-color: var(--ember);
+  }
+
+  .story-stage > .story-index {
+    padding-top: 0;
+  }
+
+  .board .timeline,
+  .board .liquidation,
+  .board .explain {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .hero {
+    padding: 26px 20px 20px;
+  }
+
+  .story {
+    padding: 18px;
+  }
+
+  .story-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .journey svg text {
+    font-size: 11px;
+  }
+}
+
+/* escalation sweep: a single ember line crosses the hero when risk first becomes critical */
+.hero {
+  overflow: hidden;
+}
+
+.hero.is-sweeping::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 38%;
+  left: -40%;
+  background: linear-gradient(100deg, transparent, rgba(224, 87, 60, 0.16), transparent);
+  pointer-events: none;
+  animation: sweep 1.2s var(--ease-out) both;
+}
+
+@keyframes sweep {
+  to { left: 110%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero.is-sweeping::after {
+    display: none;
+  }
+}
