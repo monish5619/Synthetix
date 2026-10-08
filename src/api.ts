@@ -1,5 +1,5 @@
-import type { ShipmentDetail } from '../server/pipeline';
-import type { TelemetryPayload } from '../shared/scenarios';
+import type { ShipmentDetail, TelemetryEventView } from '../server/pipeline';
+import type { ScenarioName, SimulatedReading } from '../server/simulator';
 
 export interface ShipmentSummary {
   id: string;
@@ -8,22 +8,29 @@ export interface ShipmentSummary {
   status: 'IN_TRANSIT' | 'ARRIVED';
   currentTemperature: number;
   currentHumidity: number;
-  remainingShelfLifeHours: number;
+  remainingHours: number;
   riskLevel: string;
   currentPricePerKg: number;
+}
+
+/** Response of a scenario run: the reading the server generated, the persisted event, and the full state. */
+export interface ScenarioResult {
+  scenario: ScenarioName;
+  readings: SimulatedReading;
+  event: TelemetryEventView;
+  shipment: ShipmentDetail;
 }
 
 interface ApiErrorBody {
   error?: { code?: string; message?: string; details?: string[] };
 }
 
-/** Throws a readable message from the server's standard error shape. Never shows raw bodies. */
+/** Throws the server's message. Never shows raw bodies, stacks, or internals. */
 async function readJson<T>(response: Response): Promise<T> {
   const body = (await response.json().catch(() => ({}))) as ApiErrorBody & Partial<T>;
   if (!response.ok) {
     const message = body.error?.message ?? `Request failed (${response.status}).`;
-    const details = body.error?.details?.length ? ` ${body.error.details.join(' ')}` : '';
-    throw new Error(message + details);
+    throw new Error(message);
   }
   return body as T;
 }
@@ -37,18 +44,13 @@ export async function fetchShipment(id: string): Promise<ShipmentDetail> {
   return readJson<ShipmentDetail>(await fetch(`/api/shipments/${id}`));
 }
 
-export async function sendTelemetry(
-  shipmentId: string,
-  payload: Omit<TelemetryPayload, 'shipmentId'>,
-): Promise<ShipmentDetail> {
-  const body = await readJson<{ shipment: ShipmentDetail }>(
-    await fetch('/api/telemetry', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ shipmentId, ...payload }),
-    }),
-  );
-  return body.shipment;
+/** Primary action. The server generates the thermal reading. The browser sends no values. */
+export async function simulateSpike(shipmentId: string): Promise<ScenarioResult> {
+  return readJson<ScenarioResult>(await fetch(`/api/shipments/${shipmentId}/simulate-spike`, { method: 'POST' }));
+}
+
+export async function simulateNormal(shipmentId: string): Promise<ScenarioResult> {
+  return readJson<ScenarioResult>(await fetch(`/api/shipments/${shipmentId}/simulate-normal`, { method: 'POST' }));
 }
 
 export async function resetShipment(shipmentId: string): Promise<ShipmentDetail> {

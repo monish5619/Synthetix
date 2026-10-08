@@ -6,7 +6,7 @@ import { evaluateExposure } from '../server/model';
 import { getShipmentDetail, ingestTelemetry, listTelemetry } from '../server/pipeline';
 import { seedDemoShipment } from '../server/seed';
 import { DEMO_SHIPMENT } from '../server/demo';
-import { AMBIENT_SPIKE, NORMAL_READING } from '../shared/scenarios';
+import { AMBIENT_SPIKE, NORMAL_READING } from '../server/simulator';
 
 let db: Db;
 let shipmentId: string;
@@ -127,14 +127,14 @@ describe('engine scenarios through the persisted pipeline', () => {
 
     // The result comes from the stored model run, with its full decomposition.
     expect(detail.latestModelRun).toMatchObject({
-      exposureHours: 14,
-      temperatureC: 22,
-      humidityPct: 80,
+      exposureHours: 6.3,
+      temperatureC: 30,
+      humidityPct: 85,
       riskLevel: 'CRITICAL',
     });
     expect(detail.latestModelRun!.temperatureStress).toBeCloseTo(stress, 10);
     expect(detail.latestModelRun!.humidityFactor).toBeCloseTo(humidity, 10);
-    expect(detail.current.explanation).toContain('Temperature of 22.0 °C increased above');
+    expect(detail.current.explanation).toContain('Temperature of 30.0 °C increased above');
   });
 
   it('official scenario persists every artefact and leaves an audit trail with timestamps and shipment id', () => {
@@ -164,7 +164,7 @@ describe('engine scenarios through the persisted pipeline', () => {
 
     const telemetry = listTelemetry(db, shipmentId);
     expect(telemetry).toHaveLength(1);
-    expect(telemetry[0].transitDuration).toBe(14);
+    expect(telemetry[0].transitDuration).toBe(6.3);
 
     const snapshots = db.prepare('SELECT COUNT(*) AS n FROM shelf_life_snapshots WHERE shipment_id = ?').get(shipmentId) as { n: number };
     expect(snapshots.n).toBe(2); // baseline + spike

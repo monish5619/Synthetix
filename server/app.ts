@@ -4,6 +4,7 @@ import { DEMO_SHIPMENT } from './demo.js';
 import type { Db } from './db.js';
 import { getShipmentDetail, getShipmentRow, ingestTelemetry, listShipments, listTelemetry } from './pipeline.js';
 import { resetDemoShipment } from './seed.js';
+import { SCENARIOS, type ScenarioName } from './simulator.js';
 import { validateTelemetry } from './validation.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,7 +42,7 @@ export function createApp(db: Db) {
     res.json({ shipmentId: id, count: events.length, events });
   });
 
-  /** Ingests one telemetry reading and returns the event plus the updated shipment. */
+  /** External telemetry ingest: validate, persist, recalculate, liquidate, alert, audit. */
   app.post('/api/telemetry', (req, res) => {
     const validation = validateTelemetry(req.body);
     if (!validation.ok) {
@@ -49,6 +50,19 @@ export function createApp(db: Db) {
     }
     const event = ingestTelemetry(db, validation.value);
     res.status(201).json({ event, shipment: getShipmentDetail(db, validation.value.shipmentId) });
+  });
+
+  /**
+   * Primary demo action. The server generates the reading, so the browser sends no values.
+   * The reading goes through the same validation and pipeline as external telemetry, and
+   * the complete updated state is returned.
+   */
+  app.post('/api/shipments/:id/simulate-spike', (req, res) => {
+    runScenario(req.params.id, 'ambient-spike', res);
+  });
+
+  app.post('/api/shipments/:id/simulate-normal', (req, res) => {
+    runScenario(req.params.id, 'normal-reading', res);
   });
 
   /** Demo-only: restores the demo shipment to its initial state under the same id. */
@@ -66,6 +80,27 @@ export function createApp(db: Db) {
   });
 
   app.use(errorHandler);
+
+  function runScenario(rawId: string, scenario: ScenarioName, res: Response) {
+    const id = parseId(rawId);
+    getShipmentRow(db, id); // 404 before anything is generated
+
+    const reading = SCENARIOS[scenario];
+    const validation = validateTelemetry({ shipmentId: id, ...reading });
+    if (!validation.ok) {
+      // Scenario values are fixed in code, so this fires only if a scenario definition is wrong.
+      throw new Error(`Scenario ${scenario} failed validation`);
+    }
+
+    const event = ingestTelemetry(db, validation.value);
+    res.status(201).json({
+      scenario,
+      readings: reading,
+      event,
+      shipment: getShipmentDetail(db, id),
+    });
+  }
+
   return app;
 }
 
@@ -95,5 +130,5 @@ function errorHandler(error: unknown, _req: Request, res: Response, _next: NextF
   // Log the error class only. Messages, stacks, and SQL never reach the client or the log.
   const name = error instanceof Error ? error.name : 'UnknownError';
   console.error(`[agrosense] unhandled error: ${name}`);
-  res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. Please try again.' } });
+  res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Something went wrong. The change was not saved.' } });
 }

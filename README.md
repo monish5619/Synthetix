@@ -7,9 +7,9 @@ AgroSense monitors a refrigerated shipment, recalculates the remaining shelf lif
 ## The workflow
 
 1. The shipment starts at **120 h** of shelf life, **NORMAL** risk, and the marketplace price is **₹100/kg**.
-2. **Simulate ambient temperature spike** sends a real `POST` from the browser to `/api/telemetry`.
+2. **Simulate ambient temperature spike** calls `POST /api/shipments/:id/simulate-spike`. The server generates the reading, so the browser sends no values.
 3. The server validates the event, stores it, and recalculates degradation.
-4. Shelf life drops to **17.5 h**, risk becomes **CRITICAL**, and a liquidation recommendation is created.
+4. Shelf life drops to **17.65 h** (≈18 h), risk becomes **CRITICAL**, and a liquidation recommendation is created.
 5. The listing reprices to **₹65/kg** (35% off). A retailer alert and audit entries are written.
 6. Everything is persisted to SQLite, so a browser refresh shows the same state.
 
@@ -21,7 +21,7 @@ The decision engine is deterministic and explainable. There is no ML and no LLM.
 temperatureStress      = Q10 ^ ((T − idealTemperature) / 10)          Q10 = 2.5, ideal = 4 °C
 humidityFactor         = 1 + humidityPenaltyPerPct × max(0, RH − 60)   0.02 per point
 equivalentAgeIncrement = exposureHours × temperatureStress × humidityFactor × calibration
-cumulativeEquivalentAge += equivalentAgeIncrement                      calibration = 1.005
+cumulativeEquivalentAge += equivalentAgeIncrement                      calibration = 1.0 (uncalibrated)
 remainingHours         = max(0, baselineShelfLife − cumulativeEquivalentAge)   baseline = 120 h
 ```
 
@@ -29,7 +29,7 @@ Risk bands on remaining hours: **NORMAL** above 72 h, **WATCH** 36–72 h, **HIG
 
 Liquidation policy: NORMAL 0%, WATCH 10%, HIGH 25%, CRITICAL 35%. Discounts only deepen. Each recommendation carries the risk level, markdown, original and recommended prices, urgency, a reason built from the model's drivers, and a retailer action.
 
-**Official scenario:** 120 h at 4 °C. A 14 h excursion at 22 °C and 80 % RH adds 102.50 h of equivalent ageing, leaving **17.5 h**: CRITICAL, 35% off, ₹100 → ₹65/kg. The model computes this. The calibration coefficient is the one fitted value. Without it the same event gives 18.04 h, and the 1.005 factor moves the result into the CRITICAL band. Recalibrate it against observed spoilage data.
+**Official scenario:** 120 h at 4 °C. A 6.3 h ambient excursion at 30 °C and 85 % RH adds 102.35 h of equivalent ageing (stress 10.83 × humidity 1.50 × 6.3 h), leaving **17.65 h**: CRITICAL, 35% off, ₹100 → ₹65/kg. The coefficients are not tuned. The 6.3 h excursion length is the scenario input, chosen to represent a realistic thermal event that lands at about 18 h.
 
 Every run is stored as a snapshot with its full decomposition, and each step writes an audit event.
 
@@ -38,7 +38,7 @@ Every run is stored as a snapshot with its full decomposition, and each step wri
 - **Server:** Node.js with Express 5, TypeScript run by `tsx`
 - **Database:** SQLite through Node's built-in `node:sqlite`. There are no native build steps.
 - **Frontend:** React 19 with Vite
-- **Tests:** Vitest, 53 tests. Model scenarios, the liquidation and alert engine, the official 120 h → 17.5 h scenario, and the full API workflow.
+- **Tests:** Vitest, 59 tests. Model scenarios, the liquidation and alert engine, the official scenario, the primary-action endpoint, and the full API workflow.
 
 ## Run it
 
@@ -63,7 +63,9 @@ Set `PORT` or `DATABASE_PATH` to override the defaults. The database defaults to
 | GET | `/api/shipments` | Persisted shipments with current summary |
 | GET | `/api/shipments/:id` | Current state: shipment, assessment, listing, recommendations, alerts, audit |
 | GET | `/api/shipments/:id/telemetry` | Every persisted telemetry event for the shipment, oldest first |
-| POST | `/api/telemetry` | Ingest a reading: `{ shipmentId, temperature, humidity, transitDuration }` |
+| POST | `/api/telemetry` | Ingest an external reading: `{ shipmentId, temperature, humidity, transitDuration }` |
+| POST | `/api/shipments/:id/simulate-spike` | Primary demo action. The server generates the thermal event, runs the full pipeline, and returns the complete state |
+| POST | `/api/shipments/:id/simulate-normal` | Generates a normal reading through the same pipeline |
 | POST | `/api/shipments/:id/reset` | Demo only. Restores the demo shipment to its initial state, same id |
 
 Telemetry rules: `shipmentId` is required and must be a known id. `temperature` is a finite number from −40 to 60 °C. `humidity` is a finite number from 0 to 100 %. `transitDuration` is a finite number from 0 to 24 h, meaning hours since the previous reading. Unknown fields are rejected. A reading is persisted only if the whole pipeline succeeds.

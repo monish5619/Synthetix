@@ -24,12 +24,8 @@ export const MODEL_CONFIG = {
   humidityThresholdPct: 60,
   /** Extra ageing per percentage point of humidity above the threshold (0.02 = +2 % per point). */
   humidityPenaltyPerPct: 0.02,
-  /**
-   * Calibration against the reference thermal excursion: 14 h at 22 °C / 80 % RH without
-   * calibration gives 18.04 h of shelf life left. A factor of 1.005 brings it to ≈17.5 h,
-   * inside the CRITICAL band. Recalibrate this against observed spoilage data.
-   */
-  calibrationCoefficient: 1.005,
+  /** Scale factor on ageing. 1.0 means uncalibrated. Recalibrate against observed spoilage data. */
+  calibrationCoefficient: 1.0,
 } as const;
 
 /** Product baseline used for the demo shipment. */

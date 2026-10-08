@@ -1,17 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ShipmentDetail as ShipmentState } from '../server/pipeline';
 import type { RiskLevel } from '../server/config';
-import { AMBIENT_SPIKE, NORMAL_READING } from '../shared/scenarios';
-import { fetchShipment, fetchShipments, resetShipment, sendTelemetry } from './api';
+import { fetchShipment, fetchShipments, resetShipment, simulateNormal, simulateSpike, type ScenarioResult } from './api';
 import { RISK_COPY, clock, daysAndHours, hours, multiplier, rupees } from './format';
 
+/* ---------- run state for the primary action ---------- */
+
+const STAGES = [
+  'Telemetry received',
+  'Thermal exposure analysed',
+  'Shelf life recalculated',
+  'Risk assessment updated',
+  'Liquidation engine triggered',
+] as const;
+
+/** Checklist items. Each appears only if the backend actually recorded it for this run. */
+const CONFIRMATIONS: Array<{ eventType: string; label: string }> = [
+  { eventType: 'SHELF_LIFE_RECALCULATED', label: 'Shelf life recalculated' },
+  { eventType: 'RISK_ESCALATED', label: 'Risk escalated' },
+  { eventType: 'LIQUIDATION_RECOMMENDED', label: 'Liquidation triggered' },
+  { eventType: 'MARKETPLACE_UPDATED', label: 'Marketplace updated' },
+  { eventType: 'RETAILER_ALERT_GENERATED', label: 'Retailer alert generated' },
+];
+
+interface RunState {
+  action: 'spike' | 'normal';
+  phase: 'processing' | 'confirmed' | 'failed';
+  stage: number;
+  confirmations: string[];
+  message?: string;
+}
+
 type Action = 'spike' | 'normal' | 'reset';
-type Preset = typeof AMBIENT_SPIKE;
 
 export function App() {
   const [state, setState] = useState<ShipmentState | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<Action | null>(null);
+  const [run, setRun] = useState<RunState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncedAt, setSyncedAt] = useState<Date | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
@@ -40,11 +66,44 @@ export function App() {
     seenAudit.current = ids;
   }, [state]);
 
-  async function run(action: Action, call: () => Promise<ShipmentState>) {
+  // Presentation only: advances the processing stage while the request is in flight.
+  // It does not claim any step happened. Confirmations come from the backend response.
+  useEffect(() => {
+    if (run?.phase !== 'processing') return;
+    const timer = setInterval(() => {
+      setRun((r) => (r && r.phase === 'processing' ? { ...r, stage: Math.min(r.stage + 1, STAGES.length - 1) } : r));
+    }, 320);
+    return () => clearInterval(timer);
+  }, [run?.phase]);
+
+  /**
+   * Primary action. The state only changes after the backend confirms success.
+   * On failure, the UI shows the error and keeps the previous state.
+   */
+  async function runScenario(action: 'spike' | 'normal') {
+    if (!state || busy) return;
     setBusy(action);
-    setError(null);
+    setRun({ action, phase: 'processing', stage: 0, confirmations: [] });
     try {
-      setState(await call());
+      const call = action === 'spike' ? simulateSpike : simulateNormal;
+      const result: ScenarioResult = await call(state.shipment.id);
+      setState(result.shipment);
+      setSyncedAt(new Date());
+      setRun({ action, phase: 'confirmed', stage: STAGES.length - 1, confirmations: confirmationsFor(result) });
+    } catch (err) {
+      setRun({ action, phase: 'failed', stage: 0, confirmations: [], message: messageOf(err) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reset() {
+    if (!state || busy) return;
+    setBusy('reset');
+    setError(null);
+    setRun(null);
+    try {
+      setState(await resetShipment(state.shipment.id));
       setSyncedAt(new Date());
     } catch (err) {
       setError(messageOf(err));
@@ -52,12 +111,6 @@ export function App() {
       setBusy(null);
     }
   }
-
-  const ingest = (preset: Preset | typeof NORMAL_READING) =>
-    state &&
-    run(preset === AMBIENT_SPIKE ? 'spike' : 'normal', () => sendTelemetry(state.shipment.id, preset));
-
-  const reset = () => state && run('reset', () => resetShipment(state.shipment.id));
 
   const level: RiskLevel = state?.current.riskLevel ?? 'NORMAL';
 
@@ -98,8 +151,8 @@ export function App() {
             <div className="control-copy">
               <p className="eyebrow">Simulated telemetry · software only</p>
               <p>
-                Readings go through the ingest API, are validated and stored, and feed the shelf-life model.
-                No hardware involved.
+                The server generates the reading, validates it, stores it, and runs the shelf-life model. No hardware
+                involved.
               </p>
             </div>
             <div className="actions">
@@ -107,17 +160,17 @@ export function App() {
                 type="button"
                 className="btn btn-spike"
                 disabled={busy !== null}
-                onClick={() => ingest(AMBIENT_SPIKE)}
+                onClick={() => runScenario('spike')}
               >
-                {busy === 'spike' ? 'Ingesting event…' : 'Simulate ambient temperature spike'}
+                {busy === 'spike' ? 'Processing…' : 'Simulate ambient temperature spike'}
               </button>
               <button
                 type="button"
                 className="btn btn-ghost"
                 disabled={busy !== null}
-                onClick={() => ingest(NORMAL_READING)}
+                onClick={() => runScenario('normal')}
               >
-                {busy === 'normal' ? 'Ingesting…' : 'Normal reading'}
+                {busy === 'normal' ? 'Processing…' : 'Normal reading'}
               </button>
               <button type="button" className="btn btn-quiet" disabled={busy !== null} onClick={reset}>
                 {busy === 'reset' ? 'Resetting…' : 'Reset demo'}
@@ -128,6 +181,7 @@ export function App() {
                 {error}
               </p>
             )}
+            {run && <RunPanel run={run} onRetry={() => runScenario(run.action)} busy={busy !== null} />}
           </section>
 
           <main className="grid">
@@ -138,6 +192,58 @@ export function App() {
           </main>
         </>
       )}
+    </div>
+  );
+}
+
+/** Which backend records this run produced. Built from the response only. */
+function confirmationsFor(result: ScenarioResult): string[] {
+  const { event, shipment } = result;
+  const persisted = shipment.telemetry.some((t) => t.id === event.id);
+  const types = new Set(shipment.audit.filter((a) => a.createdAt === event.recordedAt).map((a) => a.eventType));
+  const items = [persisted ? 'Telemetry persisted' : null];
+  for (const c of CONFIRMATIONS) if (types.has(c.eventType)) items.push(c.label);
+  return items.filter((x): x is string => x !== null);
+}
+
+function RunPanel({ run, onRetry, busy }: { run: RunState; onRetry: () => void; busy: boolean }) {
+  if (run.phase === 'processing') {
+    return (
+      <div className="run-panel" role="status" aria-live="polite">
+        <p className="eyebrow">Processing · {run.action === 'spike' ? 'ambient spike' : 'normal reading'}</p>
+        <ol className="run-stages">
+          {STAGES.map((label, i) => (
+            <li key={label} className={i < run.stage ? 'is-done' : i === run.stage ? 'is-active' : ''}>
+              {label}
+            </li>
+          ))}
+        </ol>
+      </div>
+    );
+  }
+  if (run.phase === 'failed') {
+    return (
+      <div className="run-panel is-failed" role="alert">
+        <p className="eyebrow">Not confirmed</p>
+        <p>
+          The backend did not confirm this event. {run.message ? `${run.message} ` : ''}Nothing was changed.
+        </p>
+        <button type="button" className="btn btn-ghost" disabled={busy} onClick={onRetry}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="run-panel is-confirmed" role="status">
+      <p className="eyebrow">Confirmed by the backend</p>
+      <ul className="run-confirms">
+        {run.confirmations.map((label) => (
+          <li key={label}>
+            <span className="tick" aria-hidden="true">✓</span> {label}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -183,6 +289,10 @@ function Hero({ state, level }: { state: ShipmentState; level: RiskLevel }) {
           <small>h</small>
         </div>
         <p className="hero-sub">{daysAndHours(remaining)} from the model</p>
+        <p className="conditions">
+          Ambient <strong>{current.temperature.toFixed(1)} °C</strong> · <strong>{current.humidity.toFixed(0)}% RH</strong>
+          <span className="muted"> · last reading</span>
+        </p>
       </div>
 
       <div className="hero-side">
@@ -271,7 +381,7 @@ function Chain({ state }: { state: ShipmentState }) {
     {
       label: 'Exposure interval',
       value: `${exposure.toFixed(1)} h`,
-      detail: 'hours since the previous reading',
+      detail: 'hours covered by the latest reading',
     },
     {
       label: 'Equivalent ageing added',
@@ -356,7 +466,7 @@ function Market({ state }: { state: ShipmentState }) {
       <header className="panel-head">
         <h2 id="market-title">Marketplace</h2>
         <span className={`status-tag ${discounted ? 'is-liquidation' : ''}`}>
-          {discounted ? 'Liquidation listing' : 'Normal price'}
+          {discounted ? 'Liquidation recommended' : 'Normal price'}
         </span>
       </header>
 
@@ -376,9 +486,7 @@ function Market({ state }: { state: ShipmentState }) {
 
       {latest ? (
         <div className="recommendation">
-          <p className="eyebrow">
-            Liquidation recommendation · {URGENCY_LABEL[latest.urgency] ?? latest.urgency}
-          </p>
+          <p className="eyebrow">Liquidation recommendation · {URGENCY_LABEL[latest.urgency] ?? latest.urgency}</p>
           <p className="rec-line">
             Sell by <strong>~{latest.sellByHours} h</strong> at {rupees(latest.recommendedPricePerKg)}/kg
           </p>
@@ -487,5 +595,7 @@ function clamp(value: number, min = 0, max = 100) {
 }
 
 function messageOf(err: unknown): string {
+  // A TypeError from fetch means the request never reached the server.
+  if (err instanceof TypeError) return 'Could not reach the AgroSense server.';
   return err instanceof Error ? err.message : 'Something went wrong.';
 }

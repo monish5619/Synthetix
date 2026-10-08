@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app';
 import { openDatabase, type Db } from '../server/db';
 import { seedDemoShipment } from '../server/seed';
-import { AMBIENT_SPIKE, NORMAL_READING } from '../shared/scenarios';
+import { AMBIENT_SPIKE, NORMAL_READING } from '../server/simulator';
 
 let db: Db;
 let server: Server;
@@ -112,9 +112,9 @@ describe('telemetry ingest', () => {
 
     expect(body.event).toMatchObject({
       shipmentId,
-      temperature: 22,
-      humidity: 80,
-      transitDuration: 14,
+      temperature: 30,
+      humidity: 85,
+      transitDuration: 6.3,
     });
     expect(typeof body.event.id).toBe('string');
     expect(body.shipment.current.riskLevel).toBe('CRITICAL');
@@ -140,8 +140,8 @@ describe('telemetry ingest', () => {
   it('GET /api/shipments/:id/telemetry returns the persisted event', async () => {
     const body = await (await send('GET', `/api/shipments/${shipmentId}/telemetry`)).json();
     expect(body.shipmentId).toBe(shipmentId);
-    const spike = body.events.find((e: { temperature: number }) => e.temperature === 22);
-    expect(spike).toMatchObject({ humidity: 80, transitDuration: 14 });
+    const spike = body.events.find((e: { temperature: number }) => e.temperature === 30);
+    expect(spike).toMatchObject({ humidity: 85, transitDuration: 6.3 });
     expect(typeof spike.recordedAt).toBe('string');
   });
 
@@ -238,5 +238,51 @@ describe('error handling', () => {
     expect(detail.listing.currentPricePerKg).toBe(100);
     expect(detail.alerts).toHaveLength(0);
     expect(detail.telemetry).toHaveLength(0);
+  });
+});
+
+describe("primary action: POST /api/shipments/:id/simulate-spike", () => {
+  it("generates the reading server-side, runs the pipeline and returns the complete state", async () => {
+    const res = await send("POST", `/api/shipments/${shipmentId}/simulate-spike`);
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.scenario).toBe("ambient-spike");
+    expect(body.readings).toEqual({ temperature: 30, humidity: 85, transitDuration: 6.3 });
+    expect(body.event.id).toEqual(expect.any(String));
+    expect(body.shipment.current.riskLevel).toBe("CRITICAL");
+    expect(body.shipment.current.remainingHours).toBeGreaterThan(17);
+    expect(body.shipment.current.remainingHours).toBeLessThan(18);
+    expect(body.shipment.current.temperature).toBe(30);
+    expect(body.shipment.current.humidity).toBe(85);
+    expect(body.shipment.listing).toMatchObject({ currentPricePerKg: 65, discountPct: 35, status: "LIQUIDATION" });
+    expect(body.shipment.recommendations).toHaveLength(1);
+    expect(body.shipment.alerts).toHaveLength(1);
+  });
+
+  it("ignores any client-supplied readings: the values come from the server", async () => {
+    const res = await send("POST", `/api/shipments/${shipmentId}/simulate-spike`, { temperature: -40, humidity: 0, transitDuration: 0 });
+    const body = await res.json();
+    expect(body.readings.temperature).toBe(30);
+  });
+
+  it("persists the event: it is visible from the telemetry history afterwards", async () => {
+    const body = await (await send("GET", `/api/shipments/${shipmentId}/telemetry`)).json();
+    expect(body.events.some((e: { temperature: number }) => e.temperature === 30)).toBe(true);
+  });
+
+  it("returns 404 for an unknown shipment and writes nothing", async () => {
+    const before = await telemetryCount();
+    await expectError(await send("POST", `/api/shipments/${MISSING_ID}/simulate-spike`), 404, "NOT_FOUND");
+    expect(await telemetryCount()).toBe(before);
+  });
+
+  it("returns 400 for a malformed id", async () => {
+    await expectError(await send("POST", "/api/shipments/nope/simulate-spike"), 400, "INVALID_ID");
+  });
+
+  it("the normal-reading scenario is also server-generated", async () => {
+    const body = await (await send("POST", `/api/shipments/${shipmentId}/simulate-normal`)).json();
+    expect(body.scenario).toBe("normal-reading");
+    expect(body.readings).toEqual({ temperature: 4, humidity: 60, transitDuration: 2 });
   });
 });
