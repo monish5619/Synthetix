@@ -15,6 +15,10 @@ export interface AppEnv {
   databasePath: string;
   allowedOrigins: readonly string[];
   demoMode: boolean;
+  /** Shared secret that external systems send in X-Ingest-Key. Required in production. */
+  ingestApiKey: string | null;
+  /** Maximum write requests per client per minute. */
+  rateLimitPerMinute: number;
 }
 
 export class EnvError extends Error {
@@ -25,6 +29,7 @@ export class EnvError extends Error {
 }
 
 const NODE_ENVS: readonly NodeEnv[] = ['development', 'production', 'test'];
+const MIN_KEY_LENGTH = 32;
 
 export function readEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const nodeEnv = (source.NODE_ENV ?? 'development') as NodeEnv;
@@ -41,8 +46,10 @@ export function readEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
 
   const allowedOrigins = parseOrigins(source.ALLOWED_ORIGINS ?? '', production);
   const demoMode = parseBoolean('DEMO_MODE', source.DEMO_MODE, !production);
+  const ingestApiKey = parseIngestKey(source.INGEST_API_KEY, production);
+  const rateLimitPerMinute = parseRate(source.RATE_LIMIT_PER_MINUTE);
 
-  return { nodeEnv, port, databasePath, allowedOrigins, demoMode };
+  return { nodeEnv, port, databasePath, allowedOrigins, demoMode, ingestApiKey, rateLimitPerMinute };
 }
 
 function parsePort(raw: string | undefined): number {
@@ -59,6 +66,28 @@ function parseBoolean(name: string, raw: string | undefined, fallback: boolean):
   if (value === 'true') return true;
   if (value === 'false') return false;
   throw new EnvError(`${name} must be "true" or "false".`);
+}
+
+/**
+ * The ingest key authenticates external telemetry senders. It must be long and random.
+ * Production refuses to start without one, so the write endpoint is never open to the internet.
+ */
+function parseIngestKey(raw: string | undefined, production: boolean): string | null {
+  const key = raw?.trim() ?? '';
+  if (key === '') {
+    if (production) throw new EnvError('INGEST_API_KEY is required in production.');
+    return null;
+  }
+  if (key.length < MIN_KEY_LENGTH) throw new EnvError(`INGEST_API_KEY must be at least ${MIN_KEY_LENGTH} characters.`);
+  return key;
+}
+
+function parseRate(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return 120;
+  if (!/^\d+$/.test(raw.trim())) throw new EnvError('RATE_LIMIT_PER_MINUTE must be a whole number.');
+  const value = Number(raw.trim());
+  if (value < 1 || value > 100000) throw new EnvError('RATE_LIMIT_PER_MINUTE must be between 1 and 100000.');
+  return value;
 }
 
 /**

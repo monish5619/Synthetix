@@ -420,7 +420,7 @@ export function ingestTelemetry(db: Db, request: TelemetryRequest): TelemetryEve
         db,
         row.id,
         'RETAILER_ALERT_GENERATED',
-        `${output.riskLevel} alert sent to ${row.retailer}`,
+        `${output.riskLevel} alert recorded for ${row.retailer}`,
         { severity: output.riskLevel, recipient: row.retailer },
         ts,
       );

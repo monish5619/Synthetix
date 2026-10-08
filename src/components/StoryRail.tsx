@@ -67,8 +67,8 @@ export function storyStages(state: ShipmentDetail): Stage[] {
     {
       key: 'retailer',
       title: 'Retailer can act',
-      value: alert ? `Alert to ${alert.recipient}` : 'No alert sent',
-      detail: alert ? `${alert.severity} alert · sent to the retailer` : 'Alerts go out at high or critical risk',
+      value: alert ? `Alert to ${alert.recipient}` : 'No alert raised',
+      detail: alert ? `${alert.severity} alert · recorded for the retailer` : 'Alerts are raised at high or critical risk',
       lit: Boolean(alert),
     },
   ];

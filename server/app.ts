@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { ApiError, EngineError } from './errors.js';
 import { DEMO_SHIPMENT } from './demo.js';
@@ -9,7 +10,8 @@ import { getShipmentDetail, getShipmentRow, ingestTelemetry, listShipments, list
 import { resetDemoShipment } from './seed.js';
 import { SCENARIOS, type ScenarioName } from './simulator.js';
 import { validateTelemetry } from './validation.js';
-import { listAlerts, listMarketplace, telemetryHistory } from './views.js';
+import { fixedWindowLimiter } from './ratelimit.js';
+import { acknowledgeAlert, listAlerts, listMarketplace, telemetryHistory } from './views.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -18,6 +20,10 @@ export interface AppOptions {
   allowedOrigins: readonly string[];
   /** Enables the scripted demo endpoints (simulate, reset). */
   demoMode: boolean;
+  /** When set, external telemetry requires this key in X-Ingest-Key. */
+  ingestApiKey?: string | null;
+  /** Maximum write requests per client per minute. */
+  rateLimitPerMinute?: number;
 }
 
 /**
@@ -32,6 +38,16 @@ export function createApp(db: Db, options: AppOptions) {
   app.use('/api', securityHeaders);
   app.use('/api', corsFor(options.allowedOrigins));
   app.use(express.json({ limit: '10kb' }));
+
+  // Every write is counted per client. Reads are not limited.
+  const allowWrite = fixedWindowLimiter(options.rateLimitPerMinute ?? 100_000);
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    if (req.method === 'POST' && !allowWrite(req.ip ?? 'unknown')) {
+      res.setHeader('Retry-After', '60');
+      throw new ApiError(429, 'RATE_LIMITED', 'Too many requests. Try again shortly.');
+    }
+    next();
+  });
 
   /** Reaching this handler means the telemetry API is up. The database and engines are checked live. */
   app.get('/api/health', (_req, res) => {
@@ -88,6 +104,7 @@ export function createApp(db: Db, options: AppOptions) {
    * original result, and writes nothing new.
    */
   app.post('/api/telemetry', (req, res) => {
+    requireIngestKey(req, options.ingestApiKey);
     const validation = validateTelemetry(req.body);
     if (!validation.ok) {
       throw new ApiError(400, 'VALIDATION_ERROR', 'Telemetry request is invalid.', validation.errors);
@@ -111,6 +128,13 @@ export function createApp(db: Db, options: AppOptions) {
   app.post('/api/shipments/:id/simulate-normal', (req, res) => {
     requireDemo(options);
     runScenario(req, res, db, 'normal-reading');
+  });
+
+  /** Retailer acknowledges a spoilage alert. Idempotent: the first acknowledgement time is kept. */
+  app.post('/api/alerts/:id/acknowledge', (req, res) => {
+    const raw = req.params.id as string;
+    if (!UUID.test(raw)) throw new ApiError(400, 'INVALID_ID', 'Alert id is not valid.');
+    res.json({ alert: acknowledgeAlert(db, raw) });
   });
 
   /** Demo only: restores the demo shipment to its initial state under the same id. */
@@ -143,6 +167,17 @@ function reqBody(req: Request): Record<string, unknown> {
   return typeof req.body === 'object' && req.body !== null && !Array.isArray(req.body)
     ? (req.body as Record<string, unknown>)
     : {};
+}
+
+/** Compares digests in constant time, so the key cannot be probed byte by byte. */
+function requireIngestKey(req: Request, expected: string | null | undefined) {
+  if (!expected) return;
+  const given = req.get('X-Ingest-Key') ?? '';
+  const a = createHash('sha256').update(given).digest();
+  const b = createHash('sha256').update(expected).digest();
+  if (given === '' || !timingSafeEqual(a, b)) {
+    throw new ApiError(401, 'UNAUTHORIZED', 'Missing or invalid ingest key.');
+  }
 }
 
 function requireDemo(options: AppOptions) {

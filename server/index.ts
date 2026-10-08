@@ -47,7 +47,12 @@ function main() {
   }
   seedDemoShipment(db);
 
-  const app = createApp(db, { allowedOrigins: env.allowedOrigins, demoMode: env.demoMode });
+  const app = createApp(db, {
+    allowedOrigins: env.allowedOrigins,
+    demoMode: env.demoMode,
+    ingestApiKey: env.ingestApiKey,
+    rateLimitPerMinute: env.rateLimitPerMinute,
+  });
   const production = env.nodeEnv === 'production';
 
   if (production) {

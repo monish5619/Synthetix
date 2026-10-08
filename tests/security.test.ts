@@ -43,8 +43,9 @@ describe('environment validation', () => {
   });
 
   it('turns demo controls off by default in production', () => {
-    expect(readEnv({ NODE_ENV: 'production' }).demoMode).toBe(false);
-    expect(readEnv({ NODE_ENV: 'production', DEMO_MODE: 'true' }).demoMode).toBe(true);
+    const prod = { NODE_ENV: 'production', INGEST_API_KEY: 'k'.repeat(40) };
+    expect(readEnv(prod).demoMode).toBe(false);
+    expect(readEnv({ ...prod, DEMO_MODE: 'true' }).demoMode).toBe(true);
   });
 
   it.each([
@@ -75,8 +76,9 @@ describe('environment validation', () => {
   });
 
   it('requires https origins in production but accepts a list of exact origins', () => {
-    expect(() => readEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: 'http://ui.example.com' })).toThrow(EnvError);
-    expect(readEnv({ NODE_ENV: 'production', ALLOWED_ORIGINS: `${ORIGIN}, https://other.example.com` }).allowedOrigins).toEqual([
+    const prod = { NODE_ENV: 'production', INGEST_API_KEY: 'k'.repeat(40) };
+    expect(() => readEnv({ ...prod, ALLOWED_ORIGINS: 'http://ui.example.com' })).toThrow(EnvError);
+    expect(readEnv({ ...prod, ALLOWED_ORIGINS: `${ORIGIN}, https://other.example.com` }).allowedOrigins).toEqual([
       ORIGIN,
       'https://other.example.com',
     ]);

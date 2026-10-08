@@ -127,6 +127,7 @@ export interface AlertItem {
   recipient: string;
   message: string;
   createdAt: string;
+  acknowledgedAt: string | null;
 }
 
 export interface HistoryEntry {
@@ -151,4 +152,8 @@ export async function fetchAlerts(): Promise<AlertItem[]> {
 
 export async function fetchTelemetryHistory(shipmentId: string): Promise<HistoryEntry[]> {
   return (await readJson<{ entries: HistoryEntry[] }>(await apiFetch(`/api/shipments/${shipmentId}/telemetry-history`))).entries;
+}
+
+export async function acknowledgeAlert(alertId: string): Promise<AlertItem> {
+  return (await readJson<{ alert: AlertItem }>(await apiFetch(`/api/alerts/${alertId}/acknowledge`, { method: 'POST' }))).alert;
 }

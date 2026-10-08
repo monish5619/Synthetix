@@ -1,10 +1,26 @@
-import { fetchAlerts, type AlertItem } from '../api';
+import { useState } from 'react';
+import { acknowledgeAlert, fetchAlerts, type AlertItem } from '../api';
 import { RISK_COPY, clock, hours, rupees } from '../format';
 import { usePoll } from '../poll';
 
-/** Alerts are read from the database. The UI does not create or reword them. */
+/** Alerts are read from the database. Acknowledging one writes back to the database, and the page shows what was stored. */
 export function AlertsPage() {
-  const { data, error, loading, syncedAt } = usePoll(fetchAlerts, 4000);
+  const { data, error, loading, syncedAt, reload } = usePoll(fetchAlerts, 4000);
+  const [acking, setAcking] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  async function acknowledge(id: string) {
+    setAcking(id);
+    setActionError(null);
+    try {
+      await acknowledgeAlert(id);
+      reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'The alert could not be acknowledged. Nothing changed.');
+    } finally {
+      setAcking(null);
+    }
+  }
 
   return (
     <section className="page" aria-labelledby="al-title">
@@ -23,19 +39,24 @@ export function AlertsPage() {
           {data ? `Showing the last synced alerts. ${error}` : error}
         </p>
       )}
+      {actionError && (
+        <p className="notice is-error" role="alert">
+          {actionError}
+        </p>
+      )}
       {loading && !data && <p className="quiet" role="status">Loading alerts from the database…</p>}
 
       {data && data.length === 0 && (
         <div className="empty-state">
           <p className="empty-title">No spoilage alerts</p>
-          <p>An alert is written when risk escalates to high or critical. Run the spike on the Control Tower to see one.</p>
+          <p>An alert is recorded when risk escalates to high or critical. Run the spike on the Control Tower to see one.</p>
         </div>
       )}
 
       {data && data.length > 0 && (
         <ul className="alert-list">
           {data.map((a) => (
-            <AlertCard key={a.id} alert={a} />
+            <AlertCard key={a.id} alert={a} busy={acking === a.id} onAcknowledge={() => acknowledge(a.id)} />
           ))}
         </ul>
       )}
@@ -43,7 +64,7 @@ export function AlertsPage() {
   );
 }
 
-function AlertCard({ alert: a }: { alert: AlertItem }) {
+function AlertCard({ alert: a, busy, onAcknowledge }: { alert: AlertItem; busy: boolean; onAcknowledge: () => void }) {
   const critical = a.severity === 'CRITICAL';
   return (
     <li className={`alert-card ${critical ? 'is-critical' : 'is-high'}`}>
@@ -76,6 +97,21 @@ function AlertCard({ alert: a }: { alert: AlertItem }) {
         </div>
       </dl>
       <p className="alert-message">{a.message}</p>
+
+      <div className="alert-ack">
+        {a.acknowledgedAt ? (
+          <p className="ack-done">
+            <span className="check" aria-hidden="true">
+              ✓
+            </span>
+            Acknowledged by the retailer at {clock(a.acknowledgedAt)}
+          </p>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={onAcknowledge}>
+            {busy ? 'Recording…' : 'Acknowledge offer'}
+          </button>
+        )}
+      </div>
     </li>
   );
 }

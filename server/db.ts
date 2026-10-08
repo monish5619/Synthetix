@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
  * version is rebuilt from scratch: this is pre-release demo data, so there is
  * no migration path to preserve.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 const TABLES = [
   'idempotency_keys',
@@ -103,7 +103,9 @@ CREATE TABLE spoilage_alerts (
   severity TEXT NOT NULL CHECK (severity IN ('HIGH', 'CRITICAL')),
   recipient TEXT NOT NULL,
   message TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- Set when the retailer acknowledges the alert. NULL means still open.
+  acknowledged_at TEXT
 );
 
 CREATE TABLE audit_logs (

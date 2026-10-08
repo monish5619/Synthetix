@@ -6,6 +6,9 @@
 import { EXCURSION_ABOVE_IDEAL_C, MODEL_CONFIG, type RiskLevel, type Urgency } from './config.js';
 import type { Db } from './db.js';
 import { classifyRisk } from './model.js';
+import { notFound } from './errors.js';
+import { inTransaction } from './db.js';
+import { audit } from './pipeline.js';
 
 const URGENCY_OF = (value: string | null): Urgency | 'NONE' => (value as Urgency | null) ?? 'NONE';
 
@@ -77,12 +80,13 @@ export interface AlertView {
   recipient: string;
   message: string;
   createdAt: string;
+  acknowledgedAt: string | null;
 }
 
 export function listAlerts(db: Db): AlertView[] {
   const rows = db
     .prepare(
-      `SELECT a.id, a.shipment_id AS shipmentId, s.code, s.produce, a.severity, a.recipient, a.message, a.created_at AS createdAt,
+      `SELECT a.id, a.shipment_id AS shipmentId, s.code, s.produce, a.severity, a.recipient, a.message, a.created_at AS createdAt, a.acknowledged_at AS acknowledgedAt,
          sn.remaining_hours AS remainingHours,
          r.markdown_pct AS markdownPct, r.recommended_price_per_kg AS recommendedPricePerKg
        FROM spoilage_alerts a
@@ -111,6 +115,7 @@ export function listAlerts(db: Db): AlertView[] {
       recipient: r.recipient as string,
       message: r.message as string,
       createdAt: r.createdAt as string,
+      acknowledgedAt: (r.acknowledgedAt as string | null) ?? null,
     };
   });
 }
@@ -156,4 +161,24 @@ export function telemetryHistory(db: Db, shipmentId: string): TelemetryHistoryEn
     riskLevel: (r.riskLevel as RiskLevel | null) ?? null,
     explanation: (r.explanation as string | null) ?? null,
   }));
+}
+
+/**
+ * Records that the retailer has seen and accepted the alert. Acknowledging twice is safe:
+ * the first acknowledgement time is kept. The change and its audit event commit together.
+ */
+export function acknowledgeAlert(db: Db, alertId: string): AlertView {
+  return inTransaction(db, () => {
+    const row = db
+      .prepare('SELECT shipment_id AS shipmentId, acknowledged_at AS acknowledgedAt FROM spoilage_alerts WHERE id = ?')
+      .get(alertId) as { shipmentId: string; acknowledgedAt: string | null } | undefined;
+    if (!row) throw notFound('Alert not found.');
+
+    if (row.acknowledgedAt === null) {
+      const ts = new Date().toISOString();
+      db.prepare('UPDATE spoilage_alerts SET acknowledged_at = ? WHERE id = ?').run(ts, alertId);
+      audit(db, row.shipmentId, 'RETAILER_ACKNOWLEDGED', 'Retailer acknowledged the spoilage alert', { alertId }, ts);
+    }
+    return listAlerts(db).find((a) => a.id === alertId) as AlertView;
+  });
 }
