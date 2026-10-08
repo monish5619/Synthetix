@@ -26,7 +26,8 @@ export function resetDemoShipment(db: Db): string {
     const existing = db.prepare('SELECT id FROM shipments WHERE code = ?').get(DEMO_SHIPMENT.code) as
       | { id: string }
       | undefined;
-    const id = existing?.id ?? randomUUID();
+    // A fixed id, so every server instance agrees on the demo shipment's id.
+    const id = existing?.id ?? DEMO_SHIPMENT.id;
     if (existing) db.prepare('DELETE FROM shipments WHERE id = ?').run(id);
 
     const ts = now();

@@ -6,6 +6,7 @@ import { DEMO_BASELINE } from './config.js';
  * in config.ts. This file holds only shipment-specific facts.
  */
 export const DEMO_SHIPMENT = {
+  id: '6f1c2a7e-3b4d-4e8f-9a10-42a1042a1042',
   code: 'AS-1042',
   produce: 'Premium Tomatoes',
   origin: 'Hosur Farm Hub',
