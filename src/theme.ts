@@ -58,9 +58,10 @@ export function saveTheme(storage: ThemeStorage | null, theme: Theme): boolean {
  * A saved choice always wins. Only when nothing is saved does the operating
  * system preference apply. With neither, the default is light.
  */
-export function resolveTheme(saved: Theme | null, systemPrefersDark: boolean): Theme {
+export function resolveTheme(saved: Theme | null, _systemPrefersDark: boolean): Theme {
   if (saved) return saved;
-  return systemPrefersDark ? 'dark' : 'light';
+  // Light is the default for every visitor. The system setting does not override it.
+  return 'light';
 }
 
 export function systemPrefersDark(): boolean {

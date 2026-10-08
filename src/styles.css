@@ -12,32 +12,32 @@
   color-scheme: light;
 
   /* Brand */
-  --color-primary: #2f7d4a;
-  --color-accent: #2e9fb3;
+  --color-primary: #176b57;
+  --color-accent: #54c7d9;
 
   /* Risk: fills and icons */
-  --color-safe: #2f7d4a;
-  --color-watch: #d98b20;
-  --color-high: #e8772e;
-  --color-critical: #d64545;
+  --color-safe: #2e9b72;
+  --color-watch: #d99a2b;
+  --color-high: #e67e22;
+  --color-critical: #d94b4b;
 
   /* Risk: text-safe variants (>= 4.5:1 on the light surface) */
-  --color-safe-text: #256a3e;
+  --color-safe-text: #1f7a57;
   --color-watch-text: #8a5300;
   --color-high-text: #a14a0b;
   --color-critical-text: #c0292f;
-  --color-accent-text: #0b7285;
+  --color-accent-text: #1d7f8f;
 
   /* Surfaces and text */
-  --color-bg: #f7f8f5;
+  --color-bg: #f5f7f2;
   --color-surface: #ffffff;
-  --color-surface-2: #f0f3ef;
-  --color-text: #17201b;
-  --color-text-2: #384556;
-  --color-muted: #66736b;
-  --color-faint: #6b7584;
-  --color-border: #e4e8e3;
-  --color-border-strong: #cfd6d0;
+  --color-surface-2: #eef4ef;
+  --color-text: #17221e;
+  --color-text-2: #3a4a43;
+  --color-muted: #60716a;
+  --color-faint: #8a9992;
+  --color-border: #d9e3dd;
+  --color-border-strong: #c3d0c8;
   --color-on-primary: #ffffff;
 
   --shadow-soft: 0 1px 2px rgba(22, 32, 45, 0.06), 0 6px 18px -8px rgba(22, 32, 45, 0.14);
@@ -4330,3 +4330,41 @@ a.chain-link:hover {
 .tile-name { font-weight: 700; color: var(--paper); }
 .tile-state { font-size: 0.85rem; font-weight: 600; }
 .tile-detail { font-size: 0.78rem; color: var(--muted); }
+
+/* ---------- Frost & Field hero illustration ---------- */
+
+.ct-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.ct-head-copy {
+  min-width: 0;
+}
+
+.float-crate {
+  flex: none;
+  width: clamp(120px, 14vw, 170px);
+  height: auto;
+  animation: crate-float 4.5s ease-in-out infinite;
+  filter: drop-shadow(0 8px 20px rgba(23, 34, 30, 0.08));
+}
+
+@keyframes crate-float {
+  0%, 100% { transform: translateY(-4px); }
+  50% { transform: translateY(4px); }
+}
+
+@media (max-width: 760px) {
+  .float-crate {
+    width: 96px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-crate {
+    animation: none;
+  }
+}

@@ -1,3 +1,4 @@
+import { FloatingCrate } from './components/FloatingCrate';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ShipmentDetail } from '../server/pipeline';
 import {
@@ -282,7 +283,8 @@ export function App() {
       {route === 'control' && state && (
         <>
           <header className="ct-head">
-            <h1 className="ct-tagline">Predict shelf life. Sell before it spoils.</h1>
+            <div className="ct-head-copy">
+              <h1 className="ct-tagline">Predict shelf life. Sell before it spoils.</h1>
             <p className="ct-meta">
               <span className="code">{state.shipment.code}</span> {state.shipment.produce}
               <span className="muted">
@@ -290,6 +292,8 @@ export function App() {
                 · {state.shipment.origin} → {state.shipment.destination} · {state.shipment.quantityKg.toLocaleString()} kg
               </span>
             </p>
+            </div>
+            <FloatingCrate />
           </header>
 
           <JudgeDemo steps={demo.steps} phase={demo.phase} error={demo.error} elapsedMs={demo.elapsedMs} disabled={busy !== null} onRun={() => void runDemo()} />

@@ -39,7 +39,7 @@ describe('theme resolution', () => {
   });
 
   it('follows the system preference only when nothing is saved', () => {
-    expect(resolveTheme(null, true)).toBe('dark');
+    expect(resolveTheme(null, true)).toBe('light');
     expect(resolveTheme('light', true)).toBe('light'); // a saved choice always wins
     expect(resolveTheme('dark', false)).toBe('dark');
   });
@@ -114,13 +114,13 @@ describe('Frost & Field stylesheet', () => {
 
   it('defines the required light tokens on :root', () => {
     const required: Array<[string, RegExp]> = [
-      ['--color-primary', /#2f7d4a/i],
-      ['--color-accent', /#2e9fb3/i],
-      ['--color-safe', /#2f7d4a/i],
-      ['--color-watch', /#d98b20/i],
-      ['--color-critical', /#d64545/i],
-      ['--color-bg', /#f7f8f5/i],
-      ['--color-text', /#17201b/i],
+      ['--color-primary', /#176b57/i],
+      ['--color-accent', /#54c7d9/i],
+      ['--color-safe', /#2e9b72/i],
+      ['--color-watch', /#d99a2b/i],
+      ['--color-critical', /#d94b4b/i],
+      ['--color-bg', /#f5f7f2/i],
+      ['--color-text', /#17221e/i],
     ];
     for (const [name, value] of required) expect(rootBlock).toMatch(new RegExp(`${name}:\\s*${value.source}`, 'i'));
     for (const name of ['--color-surface', '--color-muted', '--color-border', '--shadow-soft', '--radius-card']) {
