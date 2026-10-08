@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ShipmentState } from '../server/pipeline';
+import type { ShipmentDetail as ShipmentState } from '../server/pipeline';
 import type { RiskLevel } from '../server/model';
-import { AMBIENT_SPIKE, NORMAL_READING, type TelemetryPayload } from '../shared/scenarios';
-import { fetchShipment, resetShipment, sendTelemetry } from './api';
+import { AMBIENT_SPIKE, NORMAL_READING } from '../shared/scenarios';
+import { fetchShipment, fetchShipments, resetShipment, sendTelemetry } from './api';
 import { RISK_COPY, clock, daysAndHours, hours, multiplier, rupees } from './format';
 
 type Action = 'spike' | 'normal' | 'reset';
+type Preset = typeof AMBIENT_SPIKE;
 
 export function App() {
   const [state, setState] = useState<ShipmentState | null>(null);
@@ -16,10 +17,12 @@ export function App() {
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const seenAudit = useRef<Set<string> | null>(null);
 
+  // The demo view shows the first persisted shipment. Nothing about it is hard-coded here.
   useEffect(() => {
-    fetchShipment()
-      .then((next) => {
-        setState(next);
+    fetchShipments()
+      .then(async (list) => {
+        if (list.length === 0) throw new Error('No shipments found on the server.');
+        setState(await fetchShipment(list[0].id));
         setSyncedAt(new Date());
       })
       .catch((err: unknown) => setError(messageOf(err)))
@@ -50,8 +53,9 @@ export function App() {
     }
   }
 
-  const ingest = (payload: TelemetryPayload) =>
-    state && run(payload === AMBIENT_SPIKE ? 'spike' : 'normal', () => sendTelemetry(state.shipment.id, payload));
+  const ingest = (preset: Preset | typeof NORMAL_READING) =>
+    state &&
+    run(preset === AMBIENT_SPIKE ? 'spike' : 'normal', () => sendTelemetry(state.shipment.id, preset));
 
   const reset = () => state && run('reset', () => resetShipment(state.shipment.id));
 
@@ -234,8 +238,8 @@ function LifeTrack({ shelf, transit, reference }: { shelf: number; transit: numb
 function Chain({ state }: { state: ShipmentState }) {
   const { current, shipment } = state;
   const p = shipment.profile;
-  const temp = state.telemetry.at(-1)?.temperatureC ?? p.referenceTempC;
-  const rh = state.telemetry.at(-1)?.humidityPct ?? p.referenceHumidityPct;
+  const temp = current.temperature;
+  const rh = current.humidity;
   const shelf = useTween(current.remainingShelfLifeHours);
   const equivalent = useTween(current.equivalentAgeHours);
 
@@ -392,7 +396,7 @@ function Trace({ state }: { state: ShipmentState }) {
   const pad = 24;
   const y = (t: number) => height - pad - (clamp(t, 0, 30) / 30) * (height - pad * 2);
   const x = (i: number) => (points.length <= 1 ? width / 2 : pad + (i / (points.length - 1)) * (width - pad * 2));
-  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.temperatureC).toFixed(1)}`).join(' ');
+  const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(p.temperature).toFixed(1)}`).join(' ');
 
   return (
     <section className="panel trace" aria-labelledby="trace-title">
@@ -414,9 +418,9 @@ function Trace({ state }: { state: ShipmentState }) {
         {points.length > 0 && <path d={path} className="trace-line" />}
         {points.map((p, i) => (
           <g key={p.id}>
-            <circle cx={x(i)} cy={y(p.temperatureC)} r={4.5} className={p.temperatureC > reference + 4 ? 'dot hot' : 'dot'} />
-            <text x={x(i)} y={y(p.temperatureC) - 10} className="dot-label">
-              {p.temperatureC.toFixed(0)}°
+            <circle cx={x(i)} cy={y(p.temperature)} r={4.5} className={p.temperature > reference + 4 ? 'dot hot' : 'dot'} />
+            <text x={x(i)} y={y(p.temperature) - 10} className="dot-label">
+              {p.temperature.toFixed(0)}°
             </text>
           </g>
         ))}

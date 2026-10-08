@@ -1,25 +1,22 @@
 /**
- * Telemetry presets used by the control-tower buttons. The browser sends these
- * to the ingest API exactly like any other telemetry event; the server validates
- * them and runs the same pipeline it would for real readings.
+ * Telemetry request body, as accepted by POST /api/telemetry.
+ * Presets below are used by the control-tower buttons. The browser sends them
+ * like any other reading, and the server validates and processes them the same way.
  */
 export interface TelemetryPayload {
-  temperatureC: number;
-  humidityPct: number;
-  intervalHours: number;
-  source: 'SIMULATOR' | 'MANUAL';
+  temperature: number;
+  humidity: number;
+  transitDuration: number;
 }
 
-export const AMBIENT_SPIKE: TelemetryPayload = {
-  temperatureC: 22,
-  humidityPct: 80,
-  intervalHours: 1.5,
-  source: 'SIMULATOR',
+export const AMBIENT_SPIKE: Omit<TelemetryPayload, 'shipmentId'> = {
+  temperature: 22,
+  humidity: 80,
+  transitDuration: 1.5,
 };
 
-export const NORMAL_READING: TelemetryPayload = {
-  temperatureC: 4,
-  humidityPct: 60,
-  intervalHours: 2,
-  source: 'SIMULATOR',
+export const NORMAL_READING: Omit<TelemetryPayload, 'shipmentId'> = {
+  temperature: 4,
+  humidity: 60,
+  transitDuration: 2,
 };

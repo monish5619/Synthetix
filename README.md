@@ -57,13 +57,33 @@ Set `PORT` or `DATABASE_PATH` to override the defaults. The database defaults to
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| GET | `/api/shipment` | Demo shipment state (seeds on first call) |
-| GET | `/api/shipments/:id` | Full state for a shipment |
-| POST | `/api/shipments/:id/telemetry` | Ingest a reading: `{ temperatureC, humidityPct, intervalHours, source? }` |
-| POST | `/api/shipments/:id/reset` | Restore the initial state, keeping the same id |
-| GET | `/api/health` | Liveness check |
+| GET | `/api/health` | Liveness plus a live database check |
+| GET | `/api/shipments` | Persisted shipments with current summary |
+| GET | `/api/shipments/:id` | Current state: shipment, assessment, listing, recommendations, alerts, audit |
+| GET | `/api/shipments/:id/telemetry` | Every persisted telemetry event for the shipment, oldest first |
+| POST | `/api/telemetry` | Ingest a reading: `{ shipmentId, temperature, humidity, transitDuration }` |
+| POST | `/api/shipments/:id/reset` | Demo only. Restores the demo shipment to its initial state, same id |
 
-Telemetry validation: temperature −40 to 60 °C, humidity 0 to 100%, interval above 0 and up to 24 h. Malformed JSON gets a 400, and bodies over 10 KB get a 413. Each telemetry event runs in a single database transaction, so a failure leaves no partial state.
+Telemetry rules: `shipmentId` is required and must be a known id. `temperature` is a finite number from −40 to 60 °C. `humidity` is a finite number from 0 to 100 %. `transitDuration` is a finite number from 0 to 24 h, meaning hours since the previous reading. Unknown fields are rejected. A reading is persisted only if the whole pipeline succeeds.
+
+Errors share one shape:
+
+```json
+{ "error": { "code": "VALIDATION_ERROR", "message": "Telemetry request is invalid.", "details": ["humidity must be between 0 and 100."] } }
+```
+
+| Status | Code | When |
+| ------ | ---- | ---- |
+| 400 | `VALIDATION_ERROR` | Field missing, wrong type, out of range, or unknown |
+| 400 | `MALFORMED_JSON` | Body is not valid JSON |
+| 400 | `INVALID_ID` | Path id is not a valid id |
+| 403 | `RESET_NOT_ALLOWED` | Reset requested for a shipment other than the demo |
+| 404 | `NOT_FOUND` | Unknown shipment |
+| 404 | `ROUTE_NOT_FOUND` | Unknown API route |
+| 413 | `PAYLOAD_TOO_LARGE` | Body over 10 KB |
+| 500 | `INTERNAL_ERROR` | Anything unexpected. The message is generic. |
+
+Stack traces, SQL, database paths, and secrets never appear in responses. Only the error class is logged server-side.
 
 ## Security notes
 
